@@ -12,6 +12,14 @@ pub fn map_action(action: &str) -> Result<Key, SessionError> {
     if trimmed == "F" {
         return Ok(Key::PrevFlag);
     }
+    // "+" and "-" would both normalize to "_" (the replacement list includes
+    // them), so the bare transposition symbols are matched before that step.
+    match trimmed {
+        "+" => return Ok(Key::TransposeUp),
+        "-" => return Ok(Key::TransposeDown),
+        "0" => return Ok(Key::TransposeReset),
+        _ => {}
+    }
     let normalized = trimmed.to_ascii_lowercase().replace(['-', ' ', '+'], "_");
     let key = match normalized.as_str() {
         "next" | "down" | "j" | "arrow_down" => Key::Next,
@@ -38,6 +46,9 @@ pub fn map_action(action: &str) -> Result<Key, SessionError> {
         "back" | "b" => Key::Back,
         "page_up" | "pageup" | "pgup" => Key::PageUp,
         "page_down" | "pagedown" | "pgdn" => Key::PageDown,
+        "transpose_up" | "transpose_plus" | "plus" => Key::TransposeUp,
+        "transpose_down" | "transpose_minus" | "minus" => Key::TransposeDown,
+        "transpose_reset" | "reset_transpose" => Key::TransposeReset,
         _ => return Err(SessionError::UnknownAction(action.to_string())),
     };
     Ok(key)
@@ -82,6 +93,9 @@ pub fn map_key(state: &TriageState, key: &str) -> Result<Key, SessionError> {
             "down" | "arrowdown" | "arrow_down" | "j" => Ok(Key::Next),
             "pageup" | "page_up" | "pgup" => Ok(Key::PageUp),
             "pagedown" | "page_down" | "pgdn" => Ok(Key::PageDown),
+            "+" | "=" => Ok(Key::TransposeUp),
+            "-" => Ok(Key::TransposeDown),
+            "0" => Ok(Key::TransposeReset),
             "enter" | "return" => Ok(Key::Confirm),
             "esc" | "escape" | "b" => Ok(Key::Back),
             "q" => Ok(Key::Quit),
@@ -108,6 +122,9 @@ pub fn map_key(state: &TriageState, key: &str) -> Result<Key, SessionError> {
         "u" => Key::Undo,
         "a" => Key::AutoAccept,
         "s" => Key::Skip,
+        "+" | "=" => Key::TransposeUp,
+        "-" => Key::TransposeDown,
+        "0" => Key::TransposeReset,
         "q" | "esc" | "escape" => Key::Quit,
         "backspace" => Key::Backspace,
         _ => return char_key(trimmed, key),
@@ -173,6 +190,17 @@ mod tests {
             ("back", Key::Back),
             ("page-up", Key::PageUp),
             ("page_down", Key::PageDown),
+            ("transpose_up", Key::TransposeUp),
+            ("transpose-plus", Key::TransposeUp),
+            ("plus", Key::TransposeUp),
+            ("+", Key::TransposeUp),
+            ("transpose_down", Key::TransposeDown),
+            ("transpose-minus", Key::TransposeDown),
+            ("minus", Key::TransposeDown),
+            ("-", Key::TransposeDown),
+            ("transpose_reset", Key::TransposeReset),
+            ("reset_transpose", Key::TransposeReset),
+            ("0", Key::TransposeReset),
         ];
         for (action, expected) in cases {
             assert_eq!(map_action(action), Ok(expected), "action {action}");
@@ -213,6 +241,10 @@ mod tests {
         assert_eq!(map_key(&state, "PgDn"), Ok(Key::PageDown));
         assert_eq!(map_key(&state, "Enter"), Ok(Key::Confirm));
         assert_eq!(map_key(&state, "ctrl+c"), Ok(Key::CtrlC));
+        assert_eq!(map_key(&state, "+"), Ok(Key::TransposeUp));
+        assert_eq!(map_key(&state, "="), Ok(Key::TransposeUp));
+        assert_eq!(map_key(&state, "-"), Ok(Key::TransposeDown));
+        assert_eq!(map_key(&state, "0"), Ok(Key::TransposeReset));
         assert_eq!(map_key(&state, "x"), Ok(Key::Char('x')));
     }
 
@@ -235,6 +267,28 @@ mod tests {
         assert_eq!(map_key(&state, "b"), Ok(Key::Back));
         assert_eq!(map_key(&state, "Esc"), Ok(Key::Back));
         assert_eq!(map_key(&state, "q"), Ok(Key::Quit));
+        assert_eq!(map_key(&state, "+"), Ok(Key::TransposeUp));
+        assert_eq!(map_key(&state, "="), Ok(Key::TransposeUp));
+        assert_eq!(map_key(&state, "-"), Ok(Key::TransposeDown));
+        assert_eq!(map_key(&state, "0"), Ok(Key::TransposeReset));
+    }
+
+    #[test]
+    fn transpose_actions_drive_the_same_core_behavior() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello";
+        let mut state = TriageState::new(parse(raw), raw);
+        state.handle(Key::Confirm);
+        state.handle(map_action("transpose_up").unwrap());
+        state.handle(map_action("+").unwrap());
+        assert_eq!(state.transpose, 2);
+        assert_eq!(state.transpose_label().as_deref(), Some("Transposed +2"));
+
+        state.handle(map_action("0").unwrap());
+        assert_eq!(state.transpose, 0);
+        state.handle(map_action("-").unwrap());
+        let song = state.finish();
+        let tex = songbook_core::latex::render::render(&song, false).unwrap();
+        assert!(tex.contains("\\[Abm]Hello"), "{tex}");
     }
 
     #[test]

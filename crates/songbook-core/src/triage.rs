@@ -4,6 +4,7 @@ use crate::parser::classify::{
 };
 use crate::parser::song::{LineKind, Section, SectionKind, Song};
 use crate::preview;
+use crate::transpose::transpose_song;
 
 const METADATA_FIELD_COUNT: usize = 5;
 const PREVIEW_PAGE: usize = 10;
@@ -57,6 +58,10 @@ pub enum Key {
     Back,
     PageUp,
     PageDown,
+    /// Song-level transposition, delta-based like the web `Session::transpose`.
+    TransposeUp,
+    TransposeDown,
+    TransposeReset,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -139,6 +144,16 @@ impl Metadata {
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Status text for a net transposition offset: the new offset while active,
+/// the reset confirmation at zero.
+fn transpose_message(offset: i32) -> String {
+    if offset == 0 {
+        "Back to the original key.".into()
+    } else {
+        format!("Transposed {offset:+}.")
+    }
 }
 
 /// One raw input line plus its review decision (ADR0014).
@@ -247,6 +262,10 @@ pub struct TriageState {
     pub edit_buffer: String,
     pub message: Option<String>,
     pub preview_scroll: usize,
+    /// Net transposition in semitones applied on top of the triaged song.
+    /// Delta-accumulated (like the web `Session::transpose`) and deliberately
+    /// not part of the undo stack; `TransposeReset` is the way back.
+    pub transpose: i32,
     undo: Vec<Snapshot>,
 }
 
@@ -295,6 +314,7 @@ impl TriageState {
             edit_buffer: String::new(),
             message: None,
             preview_scroll: 0,
+            transpose: 0,
             undo: Vec::new(),
         }
     }
@@ -311,6 +331,11 @@ impl TriageState {
         self.current_line()
             .map(|line| line_kind_label(&line.kind).to_string())
             .unwrap_or_default()
+    }
+
+    /// Persistent status-line label for the net offset; `None` hides it at zero.
+    pub fn transpose_label(&self) -> Option<String> {
+        (self.transpose != 0).then(|| format!("Transposed {:+}", self.transpose))
     }
 
     pub fn verdict_label(&self) -> String {
@@ -358,11 +383,20 @@ impl TriageState {
             self.phase = Phase::Quit;
             return;
         }
-        match self.phase {
-            Phase::Metadata => self.handle_metadata(key),
-            Phase::Triage => self.handle_triage(key),
-            Phase::Preview => self.handle_preview(key),
-            Phase::Done | Phase::Quit => {}
+        // Transposition is a session-level offset over the triaged song, not a
+        // review decision: it works in every phase, accumulates deltas like the
+        // web `Session::transpose`, and is deliberately not undoable — the undo
+        // stack covers review edits only, and `TransposeReset` is the way back.
+        match key {
+            Key::TransposeUp => self.transpose_by(1),
+            Key::TransposeDown => self.transpose_by(-1),
+            Key::TransposeReset => self.transpose_reset(),
+            _ => match self.phase {
+                Phase::Metadata => self.handle_metadata(key),
+                Phase::Triage => self.handle_triage(key),
+                Phase::Preview => self.handle_preview(key),
+                Phase::Done | Phase::Quit => {}
+            },
         }
     }
 
@@ -475,6 +509,16 @@ impl TriageState {
         self.phase = Phase::Preview;
     }
 
+    fn transpose_by(&mut self, delta: i32) {
+        self.transpose += delta;
+        self.message = Some(transpose_message(self.transpose));
+    }
+
+    fn transpose_reset(&mut self) {
+        self.transpose = 0;
+        self.message = Some(transpose_message(0));
+    }
+
     fn focus_first_flag_or(&mut self, fallback: usize) {
         self.position = self.flags.first().copied().unwrap_or(fallback);
     }
@@ -565,10 +609,15 @@ impl TriageState {
         }
     }
 
+    /// The triaged song with the session's transposition offset applied
+    /// (`transpose_song` leaves zero and full-octave offsets byte-exact).
     pub fn finish(&self) -> Song {
         let mut song = Song::default();
         self.metadata.apply_to(&mut song);
         song.sections = rebuild_sections(&self.lines);
+        if self.transpose != 0 {
+            transpose_song(&mut song, self.transpose);
+        }
         song
     }
 }
@@ -914,5 +963,78 @@ mod tests {
         assert_eq!(state.metadata.title, "");
         state.handle(Key::Undo);
         assert_eq!(state.metadata.title, "X");
+    }
+
+    #[test]
+    fn transpose_keys_shift_chords_in_the_finished_song() {
+        let mut state = state_for(AMBIGUOUS_RAW);
+        state.handle(Key::TransposeUp);
+        state.handle(Key::TransposeUp);
+        assert_eq!(state.transpose, 2);
+        assert_eq!(state.transpose_label().as_deref(), Some("Transposed +2"));
+        let rendered = rendered_state(&state);
+        assert!(rendered.contains("\\[Bm]Hello"), "{rendered}");
+        assert!(rendered.contains("\\[G]Bye"), "{rendered}");
+        assert!(!rendered.contains("[Am]Hello"));
+    }
+
+    #[test]
+    fn transpose_down_and_reset_restore_the_original_output() {
+        let mut state = state_for(AMBIGUOUS_RAW);
+        let original = rendered_state(&state);
+        state.handle(Key::TransposeDown);
+        assert_eq!(state.transpose, -1);
+        assert_eq!(state.transpose_label().as_deref(), Some("Transposed -1"));
+        assert!(rendered_state(&state).contains("\\[Abm]Hello"));
+
+        state.handle(Key::TransposeReset);
+        assert_eq!(state.transpose, 0);
+        assert_eq!(state.transpose_label(), None);
+        assert_eq!(rendered_state(&state), original);
+    }
+
+    #[test]
+    fn transpose_accumulates_and_reset_covers_any_offset() {
+        let mut state = state_for(AMBIGUOUS_RAW);
+        for _ in 0..13 {
+            state.handle(Key::TransposeUp);
+        }
+        assert_eq!(state.transpose, 13);
+        assert_eq!(state.transpose_label().as_deref(), Some("Transposed +13"));
+        state.handle(Key::TransposeReset);
+        assert_eq!(state.transpose, 0);
+        assert_eq!(
+            rendered_state(&state),
+            rendered_state(&state_for(AMBIGUOUS_RAW))
+        );
+    }
+
+    #[test]
+    fn transpose_survives_navigation_and_undo() {
+        let mut state = state_for(AMBIGUOUS_RAW);
+        state.handle(Key::TransposeUp);
+        state.handle(Key::Next);
+        assert_eq!(state.transpose, 1);
+
+        state.handle(Key::Discard);
+        state.handle(Key::TransposeUp);
+        assert_eq!(state.transpose, 2);
+        state.handle(Key::Undo);
+        // Undo reverts the review decision, never the transposition offset.
+        assert_eq!(state.transpose, 2);
+        assert_eq!(
+            state.lines[flag_index(&state, "mystery")].verdict,
+            Verdict::Pending
+        );
+        assert!(rendered_state(&state).contains("\\[Bm]Hello"));
+    }
+
+    #[test]
+    fn transpose_works_from_the_preview_phase() {
+        let mut state = state_for(AMBIGUOUS_RAW);
+        state.handle(Key::Skip);
+        assert_eq!(state.phase, Phase::Preview);
+        state.handle(Key::TransposeUp);
+        assert!(rendered_state(&state).contains("\\[A#m]Hello"));
     }
 }

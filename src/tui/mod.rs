@@ -119,6 +119,9 @@ fn map_key(key: KeyEvent, state: &TriageState) -> Option<Key> {
             KeyCode::Down | KeyCode::Char('j') => Some(Key::Next),
             KeyCode::PageUp => Some(Key::PageUp),
             KeyCode::PageDown => Some(Key::PageDown),
+            KeyCode::Char('+') | KeyCode::Char('=') => Some(Key::TransposeUp),
+            KeyCode::Char('-') => Some(Key::TransposeDown),
+            KeyCode::Char('0') => Some(Key::TransposeReset),
             KeyCode::Enter => Some(Key::Confirm),
             KeyCode::Esc | KeyCode::Char('b') => Some(Key::Back),
             KeyCode::Char('q') => Some(Key::Quit),
@@ -145,6 +148,9 @@ fn map_key(key: KeyEvent, state: &TriageState) -> Option<Key> {
         KeyCode::Char('s') => Some(Key::Skip),
         KeyCode::Char('q') | KeyCode::Esc => Some(Key::Quit),
         KeyCode::Backspace => Some(Key::Backspace),
+        KeyCode::Char('+') | KeyCode::Char('=') if !ctrl => Some(Key::TransposeUp),
+        KeyCode::Char('-') if !ctrl => Some(Key::TransposeDown),
+        KeyCode::Char('0') if !ctrl => Some(Key::TransposeReset),
         KeyCode::Char(ch) if !ctrl => Some(Key::Char(ch)),
         _ => None,
     }
@@ -228,8 +234,62 @@ mod tests {
             Some(Key::Char('j'))
         );
         assert_eq!(
+            map_key(key_event(KeyCode::Char('+'), KeyModifiers::NONE), &state),
+            Some(Key::Char('+'))
+        );
+        assert_eq!(
             map_key(key_event(KeyCode::Enter, KeyModifiers::NONE), &state),
             Some(Key::Confirm)
+        );
+    }
+
+    #[test]
+    fn triage_and_preview_map_transpose_keys() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello\nmystery line";
+        let mut state = TriageState::new(parse(raw), raw);
+        state.handle(Key::Confirm);
+        for (code, expected) in [
+            (KeyCode::Char('+'), Key::TransposeUp),
+            (KeyCode::Char('='), Key::TransposeUp),
+            (KeyCode::Char('-'), Key::TransposeDown),
+            (KeyCode::Char('0'), Key::TransposeReset),
+        ] {
+            assert_eq!(
+                map_key(key_event(code, KeyModifiers::NONE), &state),
+                Some(expected)
+            );
+        }
+
+        state.handle(Key::Skip);
+        assert_eq!(state.phase, Phase::Preview);
+        for (code, expected) in [
+            (KeyCode::Char('+'), Key::TransposeUp),
+            (KeyCode::Char('='), Key::TransposeUp),
+            (KeyCode::Char('-'), Key::TransposeDown),
+            (KeyCode::Char('0'), Key::TransposeReset),
+        ] {
+            assert_eq!(
+                map_key(key_event(code, KeyModifiers::NONE), &state),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_mode_types_transpose_characters() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello\nmystery line";
+        let state = TriageState::new(parse(raw), raw);
+        assert_eq!(
+            map_key(key_event(KeyCode::Char('+'), KeyModifiers::NONE), &state),
+            Some(Key::Char('+'))
+        );
+        assert_eq!(
+            map_key(key_event(KeyCode::Char('-'), KeyModifiers::NONE), &state),
+            Some(Key::Char('-'))
+        );
+        assert_eq!(
+            map_key(key_event(KeyCode::Char('0'), KeyModifiers::NONE), &state),
+            Some(Key::Char('0'))
         );
     }
 }

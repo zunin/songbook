@@ -64,12 +64,12 @@ fn draw_body(frame: &mut Frame, area: Rect, state: &TriageState) {
     let max_scroll = rows.len().saturating_sub(1);
     let scroll = state.preview_scroll.min(max_scroll);
     let lines: Vec<Line> = rows.iter().map(row_to_line).collect();
+    let title = match state.transpose_label() {
+        Some(label) => format!("Song structure (metadata + sections) · {label}"),
+        None => "Song structure (metadata + sections)".to_string(),
+    };
     let paragraph = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Song structure (metadata + sections)"),
-        )
+        .block(Block::default().borders(Borders::ALL).title(title))
         .scroll((scroll as u16, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
@@ -78,6 +78,7 @@ fn draw_body(frame: &mut Frame, area: Rect, state: &TriageState) {
 fn draw_footer(frame: &mut Frame, area: Rect) {
     let legend = concat!(
         "j/k or Up/Down scroll · PgUp/PgDn page · ",
+        "+/- transpose · 0 reset · ",
         "Enter export · Esc/b back to triage · q quit"
     );
     let paragraph = Paragraph::new(legend)
@@ -170,5 +171,21 @@ mod tests {
             state.handle(Key::PageUp);
         }
         assert_eq!(state.preview_scroll, 0);
+    }
+
+    #[test]
+    fn transposing_rerenders_chords_and_labels_the_offset() {
+        let mut state = preview_state("Song: Test\n[Verse]\n[Am]Hello");
+        state.handle(Key::TransposeUp);
+        state.handle(Key::TransposeUp);
+        let text = rendered(&state, 120, 40);
+        assert!(text.contains("[Bm]Hello"), "{text}");
+        assert!(text.contains("Transposed +2"), "{text}");
+        assert!(text.contains("+/- transpose"), "{text}");
+
+        state.handle(Key::TransposeReset);
+        let text = rendered(&state, 120, 40);
+        assert!(text.contains("[Am]Hello"), "{text}");
+        assert!(!text.contains("Transposed"), "{text}");
     }
 }

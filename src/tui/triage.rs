@@ -122,10 +122,11 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
         .split(area);
 
     let title = format!(
-        "Input · {} lines · {} flagged · {} pending · > current · ? pending · ✓ kept · × dropped · · preamble",
+        "Input · {} lines · {} flagged · {} pending · > current · ? pending · ✓ kept · × dropped · · preamble{}",
         state.lines.len(),
         state.flags.len(),
-        state.pending_flags()
+        state.pending_flags(),
+        transpose_suffix(state)
     );
     let lines: Vec<Line> = state
         .lines
@@ -219,13 +220,22 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &TriageState) {
         }
         _ => concat!(
             "j/k line · f/F flag · PgUp/PgDn jump · Enter keep · d drop · l lyric · c chord · ",
-            "h header · n noise · e edit · u undo · a accept rest · s preview · q quit"
+            "h header · n noise · e edit · u undo · a accept rest · +/- transpose · 0 reset · ",
+            "s preview · q quit"
         ),
     };
     let paragraph = Paragraph::new(legend)
         .block(Block::default().borders(Borders::ALL).title("Keys"))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
+}
+
+/// Persistent transposition indicator for block titles, empty at zero offset.
+fn transpose_suffix(state: &TriageState) -> String {
+    match state.transpose_label() {
+        Some(label) => format!(" · {label}"),
+        None => String::new(),
+    }
 }
 
 #[cfg(test)]
@@ -312,5 +322,20 @@ mod tests {
         state.handle(Key::Edit);
         let text = rendered(&state);
         assert!(text.contains("Editing:"));
+    }
+
+    #[test]
+    fn input_title_shows_the_transposition_offset() {
+        let mut state = example_state();
+        state.handle(Key::Confirm);
+        assert!(!rendered(&state).contains("Transposed"));
+        state.handle(Key::TransposeUp);
+        state.handle(Key::TransposeUp);
+        let text = rendered(&state);
+        assert!(text.contains("Transposed +2"), "{text}");
+        assert!(text.contains("+/- transpose"), "{text}");
+
+        state.handle(Key::TransposeReset);
+        assert!(!rendered(&state).contains("Transposed"));
     }
 }
