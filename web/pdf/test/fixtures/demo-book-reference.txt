@@ -1,0 +1,152 @@
+Demo Songbook
+Songbook Project
+
+1
+
+Index of Songs
+Every Construct . . . . . . . . . . . . . . . . 2
+Let It Be . . . . . . . . . . . . . . . . . . . . . . 1
+
+2
+
+*
+
+Let It Be
+
+1
+
+The Beatles
+
+Key: C
+
+Am F C G
+2x
+*
+
+1.
+
+Am
+
+F
+
+When I find myself in times of
+trouble,
+
+C
+
+G
+
+Mother Mary comes to me
+
+Am
+
+F
+
+Speaking words of wisdom, let
+
+C
+
+it be
+
+Am
+
+F
+
+C
+
+G
+
+Let it be, let it be, let it be, yeah
+
+Am
+
+F
+
+C
+
+There will be an answer, let it be
+# This section intentionally left
+messy for triage testing
+some line the classifier won’t know
+what to do with
+
+Am
+
+F
+
+C
+
+Let it be, let it be
+3
+
+G
+
+Every Construct
+
+2
+
+A
+
+Same chorus body over and over,
+
+Test & Co.
+
+with punctuation!
+Tuning: D A D G A D
+
+D
+
+Key: D
+
+Chorus repeats
+
+Let it ring
+
+capo 2
+
+D
+
+This is an unnumbered verse*
+
+D A Bm G
+
+context
+
+G
+
+2x
+
+With another line
+*
+
+*
+
+1.
+
+D
+
+D
+
+A
+
+A
+
+Goodbye now
+
+This verse exercises inline
+
+*
+
+chords
+
+Bm
+
+and writes 100 - % of R&D $5
+#1 under_score {braces}
+t̃ilde ĉaret
+backslash
+Plain ambiguous lyric line
+
+4
+
+

@@ -110,3 +110,16 @@ pub fn compose_book(
         .collect::<Vec<_>>();
     book::compose_book(title.as_deref(), author.as_deref(), &parts, chord_index).map_err(js_error)
 }
+
+/// JavaScript-facing song-index conversion (ADR0019): converts one `.sxd`
+/// index data file, as LaTeX pass 1 writes it, into the `.sbx` content a
+/// later pass typesets. The PDF worker calls this between engine compiles to
+/// replace the native `texlua songidx.lua` step inside the browser. The
+/// conversion itself lives entirely in `songbook_core::songidx` (the pinned
+/// `songidx.lua` port); errors surface as plain strings like every other
+/// wasm-boundary failure in this crate.
+#[wasm_bindgen]
+pub fn convert_sxd_to_sbx(input: &str) -> Result<String, JsValue> {
+    songbook_core::songidx::convert_sxd_to_sbx(input)
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
