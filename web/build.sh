@@ -53,6 +53,12 @@ rm -rf "$out_dir"
 mkdir -p "$out_dir"
 wasm-bindgen --target web --out-dir "$out_dir" --out-name songbook_wasm "$wasm_path"
 
+# Node's module resolver needs a "type": "module" marker: dist has no
+# package.json and the glue (songbook_wasm.js) is an ES module. Browsers
+# ignore this file; it lets the PDF worker's lazy glue import work under
+# node (the smoke) exactly as it does in the browser.
+printf '{"type": "module"}\n' > "$out_dir/package.json"
+
 if command -v wasm-opt >/dev/null 2>&1; then
   echo "==> wasm-opt -Oz"
   # rustc (1.88+) emits bulk-memory and sign-ext instructions by default;
