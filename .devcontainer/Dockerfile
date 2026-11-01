@@ -5,11 +5,16 @@ RUN curl -Ls "https://github.com/tectonic-typesetting/tectonic/releases/download
     | tar xz -C /usr/local/bin tectonic \
     && tectonic --version
 
-# NOTE: wasm-opt (binaryen) is deliberately NOT installed here. Debian
-# bookworm's binaryen 108 re-encodes rustc 1.88's wasm output (typed
-# function references) into something V8 rejects at validation, so
-# web/build.sh's optional wasm-opt step must stay skipped. Pin a modern
-# binaryen release (with sha256, house style) before re-enabling it.
+# NOTE: wasm-opt (binaryen) is deliberately NOT installed here. Tested on
+# 2026-11-01 against this project's rustc 1.88 / wasm-bindgen 0.2.100 output:
+# - Debian bookworm's binaryen 108 rejects the module outright (bulk memory /
+#   sign-ext), and its flag-enabled output was also rejected by V8;
+# - pinned upstream binaryen 133 (--all -Oz) validated and optimized the
+#   module (1,554,257 -> 1,414,919 B) but the RESULT was rejected by V8 at
+#   instantiation ("unknown import kind 0x7f") under node 26 — while the
+#   unoptimized module instantiates fine everywhere.
+# Do not re-enable without a newer binaryen AND the full smoke gate (both
+# fixtures must pass byte-exact on the optimized wasm).
 
 # web/build.sh requires the wasm32 rust target and a wasm-bindgen-cli whose
 # version exactly matches the `wasm-bindgen = "=0.2.100"` pin in
