@@ -28,8 +28,9 @@ USER root
 
 # Node.js runs the PDF asset build's smoke test (the default final step of
 # web/build-pdf-assets.sh) and the external PDF smoke; Debian bookworm's
-# nodejs covers the plain-stdlib usage in web/pdf/test/smoke-node.mjs.
+# nodejs covers the plain-stdlib usage in web/pdf/test/smoke-node.mjs, and
+# poppler-utils provides the pdftotext/pdfinfo that smoke compares with.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends nodejs poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
-    && node --version
+    && node --version && pdftotext -v 2>&1 | head -1 && pdfinfo -v 2>&1 | head -1

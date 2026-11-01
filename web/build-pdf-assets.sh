@@ -211,6 +211,11 @@ PYEOF
 
 # --- 7. deploy module + offline test page -------------------------------------
 say "deploying module + test page"
+# Node's module resolver needs a "type": "module" marker: the asset tree has
+# no package.json of its own and every .js here is an ES module (the engine's
+# ESM dist and pdf-worker.js). Browsers ignore this file; it exists so the
+# smoke test's node can import the tree the way the browser does.
+printf '{"type": "module"}\n' > "$ASSETS/package.json"
 cp "$SRC/pdf-engine.js" "$ASSETS/pdf-engine.js"
 cp "$SRC/pdf-worker.js" "$ASSETS/pdf-worker.js"
 cp "$SRC/pdf/test/index.html" "$ASSETS/test/index.html"
