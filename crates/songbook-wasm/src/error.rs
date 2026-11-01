@@ -11,6 +11,7 @@ pub enum SessionError {
     NotEditing,
     InvalidChar(String),
     Render(String),
+    Compose(String),
 }
 
 impl fmt::Display for SessionError {
@@ -31,6 +32,7 @@ impl fmt::Display for SessionError {
                 write!(formatter, "expected exactly one character, got: {value:?}")
             }
             Self::Render(message) => write!(formatter, "rendering failed: {message}"),
+            Self::Compose(message) => write!(formatter, "book composition failed: {message}"),
         }
     }
 }

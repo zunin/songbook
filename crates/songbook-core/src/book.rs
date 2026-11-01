@@ -5,6 +5,11 @@
 //! unchanged and only adds document-level structure: package setup, an
 //! optional title block, the `songs` environment, and the package's indexes.
 //!
+//! Composition is also exposed over pre-rendered parts (`compose_book`,
+//! ADR0019): the web triages songs one at a time in wasm `Session`s and hands
+//! the rendered bodies plus their chord lists back to core, so book assembly
+//! has exactly one implementation and never drifts into JavaScript.
+//!
 //! Index structure follows the pinned `songs` package documentation (v3.1,
 //! `web/dist/pdf-assets/sources/songs.zip`), which requires three coordinated
 //! pieces for an index to be non-empty:
@@ -149,6 +154,54 @@ fn is_tab_path(path: &str) -> bool {
 /// order; songs the caller skipped simply do not appear in the book. The
 /// title index is always included; `chord_index` adds the chord index.
 pub fn render_book(manifest: &BookManifest, songs: &[Song], chord_index: bool) -> Result<String> {
+    let mut parts = Vec::with_capacity(songs.len());
+    for song in songs {
+        parts.push(BookPart {
+            body: render(song, false)?,
+            chords: distinct_chords(song),
+        });
+    }
+    compose_book(
+        manifest.title.as_deref(),
+        manifest.author.as_deref(),
+        &parts,
+        chord_index,
+    )
+}
+
+/// One triaged song's contribution to a book (ADR0019): the non-standalone
+/// `\beginsong…\endsong` body plus the chord list the chord index needs. The
+/// web produces one of these per song in its wasm `Session` and hands the
+/// slice back to [`compose_book`], so book assembly stays in core and no
+/// LaTeX is ever assembled in JavaScript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookPart {
+    /// The song's body exactly as the single-song renderer produces it
+    /// (`render(song, false)` — the same string the wasm `export_tex(false)`
+    /// returns).
+    pub body: String,
+    /// The song's distinct chords in first-appearance order, as
+    /// [`distinct_chords`] derives them.
+    pub chords: Vec<String>,
+}
+
+/// Composes pre-rendered song parts into the complete standalone LaTeX book
+/// document: the package preamble with the index declarations, an optional
+/// title block, the `songs` environment holding each part's body in order,
+/// and the index displays.
+///
+/// This is the one composition implementation (P1): [`render_book`] derives
+/// parts from a manifest's songs and delegates here, and the wasm ferry hands
+/// browser-triaged parts to the same code. Titles and authors are escaped like
+/// song metadata, and empty ones count as absent. The title index is always
+/// included; `chord_index` adds the chord index, injecting one `\indexentry`
+/// per part chord right after the part's `\beginsong` line.
+pub fn compose_book(
+    title: Option<&str>,
+    author: Option<&str>,
+    parts: &[BookPart],
+    chord_index: bool,
+) -> Result<String> {
     let mut doc = String::new();
     doc.push_str("\\documentclass[12pt]{article}\n");
     doc.push_str("\\usepackage[chorded]{songs}\n\n");
@@ -157,13 +210,10 @@ pub fn render_book(manifest: &BookManifest, songs: &[Song], chord_index: bool) -
     if chord_index {
         doc.push_str("\\newindex{chordidx}{chordidx}\n");
     }
-    // The manifest carries plain text; escaping happens here at render time,
+    // The parts carry plain text; escaping happens here at render time,
     // with the same helper the song renderer uses for titles and artists.
-    let title = manifest.title.as_deref().filter(|title| !title.is_empty());
-    let author = manifest
-        .author
-        .as_deref()
-        .filter(|author| !author.is_empty());
+    let title = title.filter(|title| !title.is_empty());
+    let author = author.filter(|author| !author.is_empty());
     if let Some(title) = title {
         doc.push_str(&format!("\\title{{{}}}\n", escape(title)));
     }
@@ -182,12 +232,11 @@ pub fn render_book(manifest: &BookManifest, songs: &[Song], chord_index: bool) -
     }
     doc.push_str("\\showindex{Index of Songs}{titleidx}\n");
     doc.push_str("\\begin{songs}{titleidx}\n");
-    for song in songs {
-        let body = render(song, false)?;
+    for part in parts {
         if chord_index {
-            push_chord_entries(&mut doc, song, &body);
+            push_chord_entries(&mut doc, part);
         } else {
-            doc.push_str(&body);
+            doc.push_str(&part.body);
         }
     }
     doc.push_str("\\end{songs}\n");
@@ -198,28 +247,32 @@ pub fn render_book(manifest: &BookManifest, songs: &[Song], chord_index: bool) -
     Ok(doc)
 }
 
-/// Appends a song body to the document, adding the book's chord-index entries
-/// right after the `\beginsong` line. `\indexentry` is only effective between
-/// `\beginsong` and `\endsong`, and writes only if the song is shipped, which
-/// injection at composition time satisfies.
-fn push_chord_entries(doc: &mut String, song: &Song, body: &str) {
-    let chords = distinct_chords(song);
-    if chords.is_empty() {
-        doc.push_str(body);
+/// Appends a pre-rendered body to the document, adding the book's chord-index
+/// entries right after the `\beginsong` line. `\indexentry` is only effective
+/// between `\beginsong` and `\endsong`, and writes only if the song is
+/// shipped, which injection at composition time satisfies.
+fn push_chord_entries(doc: &mut String, part: &BookPart) {
+    if part.chords.is_empty() {
+        doc.push_str(&part.body);
         return;
     }
-    let header_end = body.find('\n').map(|end| end + 1).unwrap_or(body.len());
-    doc.push_str(&body[..header_end]);
-    for chord in chords {
-        doc.push_str(&format!("\\indexentry[chordidx]{{{}}}%\n", escape(&chord)));
+    let header_end = part
+        .body
+        .find('\n')
+        .map(|end| end + 1)
+        .unwrap_or(part.body.len());
+    doc.push_str(&part.body[..header_end]);
+    for chord in &part.chords {
+        doc.push_str(&format!("\\indexentry[chordidx]{{{}}}%\n", escape(chord)));
     }
-    doc.push_str(&body[header_end..]);
+    doc.push_str(&part.body[header_end..]);
 }
 
 /// The song's distinct chords in first-appearance order, using the same chord
 /// helpers the renderer emits from: inline `[Chord]` markers for lyric lines
-/// and bare tokens for chord-only lines.
-fn distinct_chords(song: &Song) -> Vec<String> {
+/// and bare tokens for chord-only lines. Public because the wasm ferry must
+/// reuse this one chord derivation for the parts it composes.
+pub fn distinct_chords(song: &Song) -> Vec<String> {
     let mut chords: Vec<String> = Vec::new();
     for section in &song.sections {
         for line in &section.lines {
@@ -477,5 +530,100 @@ a-song.crd
         let tex = render_book(&manifest, &songs, false).unwrap();
         let golden = fs::read_to_string(examples.join("demo-book.tex")).unwrap();
         assert_eq!(tex, golden);
+    }
+
+    // --- parts-based composition (ADR0019) ---
+
+    /// Derives parts the way the wasm ferry does: one `render(song, false)`
+    /// body plus core's `distinct_chords` per song.
+    fn parts_for(songs: &[Song]) -> Vec<BookPart> {
+        songs
+            .iter()
+            .map(|song| BookPart {
+                body: render(song, false).unwrap(),
+                chords: distinct_chords(song),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn compose_book_equals_render_book_for_the_same_songs() {
+        let manifest = BookManifest::parse(
+            "Title: My Book\nAuthor: A. Writer\nsong.txt\nsong.crd",
+            Path::new("."),
+        )
+        .unwrap();
+        let songs = [
+            parse(GOOD),
+            parse("[Verse]\n[Am]Hello [Am]there\nD  G  2x\n"),
+            // A chordless part must pass through untouched either way.
+            parse("[Chorus]\nLa la la\n"),
+        ];
+        let parts = parts_for(&songs);
+        for chord_index in [false, true] {
+            assert_eq!(
+                compose_book(
+                    manifest.title.as_deref(),
+                    manifest.author.as_deref(),
+                    &parts,
+                    chord_index
+                )
+                .unwrap(),
+                render_book(&manifest, &songs, chord_index).unwrap(),
+                "chord_index={chord_index}"
+            );
+        }
+    }
+
+    #[test]
+    fn compose_book_with_no_parts_is_a_valid_empty_book() {
+        let manifest = BookManifest::parse("song.txt", Path::new(".")).unwrap();
+        for chord_index in [false, true] {
+            assert_eq!(
+                compose_book(None, None, &[], chord_index).unwrap(),
+                render_book(&manifest, &[], chord_index).unwrap(),
+                "chord_index={chord_index}"
+            );
+        }
+        let tex = compose_book(None, None, &[], false).unwrap();
+        assert!(
+            tex.contains("\\begin{songs}{titleidx}\n\\end{songs}"),
+            "{tex}"
+        );
+        assert!(tex.contains("\\begin{document}\n\\showindex"), "{tex}");
+    }
+
+    #[test]
+    fn compose_book_treats_empty_metadata_as_absent() {
+        let tex = compose_book(Some(""), Some("Someone"), &[], false).unwrap();
+        assert!(!tex.contains("\\title"), "{tex}");
+        assert!(tex.contains("\\author{Someone}"), "{tex}");
+        assert!(tex.contains("\\maketitle"));
+    }
+
+    #[test]
+    fn compose_book_injects_chord_entries_between_the_part_boundaries() {
+        let song = parse("[Verse]\n[Am]Hello [Am]there\nD  G  2x\n");
+        let part = BookPart {
+            body: render(&song, false).unwrap(),
+            chords: distinct_chords(&song),
+        };
+        assert_eq!(part.chords, ["Am", "D", "G"]);
+        let tex = compose_book(None, None, &[part], true).unwrap();
+        assert!(
+            tex.contains(
+                "\\beginsong{Untitled}\n\\indexentry[chordidx]{Am}%\n\\indexentry[chordidx]{D}%\n\
+             \\indexentry[chordidx]{G}%\n\\beginverse"
+            ),
+            "{tex}"
+        );
+
+        // A part with no chords is appended verbatim, no injection.
+        let plain = BookPart {
+            body: "\\beginsong{Plain}\n\\beginverse\nla\n\\endverse\n\\endsong\n".to_string(),
+            chords: Vec::new(),
+        };
+        let tex = compose_book(None, None, &[plain], true).unwrap();
+        assert!(tex.contains("\\beginsong{Plain}\n\\beginverse"), "{tex}");
     }
 }

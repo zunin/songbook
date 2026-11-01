@@ -1,4 +1,5 @@
 mod actions;
+mod book;
 mod error;
 mod model;
 mod session;
@@ -6,9 +7,11 @@ mod session;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
+pub use book::compose_book;
 pub use error::SessionError;
 pub use model::{
-    LineSnapshot, MetadataFieldSnapshot, MetadataSnapshot, PreviewRowSnapshot, SessionSnapshot,
+    BookPartSnapshot, LineSnapshot, MetadataFieldSnapshot, MetadataSnapshot, PreviewRowSnapshot,
+    SessionSnapshot,
 };
 pub use session::Session;
 

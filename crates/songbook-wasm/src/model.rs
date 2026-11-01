@@ -64,6 +64,16 @@ pub struct PreviewRowSnapshot {
     pub style: String,
 }
 
+/// One triaged song's contribution to a book (ADR0019): the non-standalone
+/// LaTeX body — exactly what `export_tex(false)` returns — plus the song's
+/// distinct chords as core's book composer expects them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookPartSnapshot {
+    pub body: String,
+    pub chords: Vec<String>,
+}
+
 pub(crate) fn snapshot(state: &TriageState) -> SessionSnapshot {
     SessionSnapshot {
         phase: phase_name(state.phase).to_string(),

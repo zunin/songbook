@@ -1,6 +1,7 @@
 use crate::actions::{map_action, map_key};
 use crate::error::SessionError;
-use crate::model::{self, PreviewRowSnapshot, SessionSnapshot};
+use crate::model::{self, BookPartSnapshot, PreviewRowSnapshot, SessionSnapshot};
+use songbook_core::book;
 use songbook_core::latex::render::render;
 use songbook_core::parser::classify::parse;
 use songbook_core::triage::{Key, Phase, TriageState};
@@ -43,6 +44,17 @@ impl Session {
     pub fn export_tex(&self, standalone: bool) -> Result<String, SessionError> {
         render(&self.state.finish(), standalone)
             .map_err(|error| SessionError::Render(error.to_string()))
+    }
+
+    /// The song's book part (ADR0019): the non-standalone LaTeX body —
+    /// exactly what [`Session::export_tex`] with `false` returns — plus its
+    /// distinct chords as core's book composer expects them. The body is
+    /// handed back to `composeBook` verbatim; no LaTeX is assembled in
+    /// JavaScript.
+    pub fn book_parts(&self) -> Result<BookPartSnapshot, SessionError> {
+        let body = self.export_tex(false)?;
+        let chords = book::distinct_chords(&self.state.finish());
+        Ok(BookPartSnapshot { body, chords })
     }
 
     /// Applies a semantic action such as `next`, `discard`, `undo`, or `skip`.
@@ -182,6 +194,28 @@ mod tests {
 
         session.handle_action("undo").unwrap();
         assert!(session.export_tex(false).unwrap().contains("mystery line"));
+    }
+
+    #[test]
+    fn book_parts_body_matches_export_tex_and_lists_distinct_chords() {
+        let raw = "Song: Test\nArtist: Band\n[Verse]\n[Am]Hello [Am]there\nD  G  2x\nmystery line";
+        let session = Session::new(raw).unwrap();
+        let parts = session.book_parts().unwrap();
+        assert_eq!(parts.body, session.export_tex(false).unwrap());
+        assert!(
+            parts.body.starts_with("\\beginsong{Test}"),
+            "{}",
+            parts.body
+        );
+        assert_eq!(parts.chords, ["Am", "D", "G"]);
+
+        // Discarding the chord-only line removes its chords from the part.
+        let mut session = Session::new(raw).unwrap();
+        session.handle_action("confirm").unwrap();
+        session.handle_action("prev").unwrap(); // onto "D  G  2x"
+        session.handle_action("discard").unwrap();
+        let parts = session.book_parts().unwrap();
+        assert_eq!(parts.chords, ["Am"]);
     }
 
     #[test]

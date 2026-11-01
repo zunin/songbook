@@ -1,6 +1,8 @@
+use crate::book;
 use crate::error::SessionError;
 use crate::session::Session;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use songbook_core::book::BookPart;
 use wasm_bindgen::prelude::*;
 
 fn js_error(error: SessionError) -> JsValue {
@@ -42,6 +44,14 @@ impl SongbookSession {
         self.inner.export_tex(standalone).map_err(js_error)
     }
 
+    /// The song's book part for `composeBook`: the non-standalone LaTeX body
+    /// (identical to `exportTex(false)`) plus the song's distinct chords.
+    #[wasm_bindgen(js_name = bookParts)]
+    pub fn book_parts(&self) -> Result<JsValue, JsValue> {
+        let parts = self.inner.book_parts().map_err(js_error)?;
+        to_js(&parts)
+    }
+
     #[wasm_bindgen(js_name = handleAction)]
     pub fn handle_action(&mut self, action: &str) -> Result<JsValue, JsValue> {
         self.inner.handle_action(action).map_err(js_error)?;
@@ -65,4 +75,38 @@ impl SongbookSession {
         self.inner.insert_text(text).map_err(js_error)?;
         self.snapshot()
     }
+}
+
+/// One pre-rendered song part as JavaScript sends it to `composeBook`: the
+/// body from `bookParts()` plus its distinct chords.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BookPartInput {
+    body: String,
+    chords: Vec<String>,
+}
+
+/// JavaScript-facing book ferry (ADR0019): composes pre-rendered song parts
+/// into one standalone book LaTeX document, entirely inside core. `parts` is
+/// an array of `{ body, chords }` objects exactly as
+/// `SongbookSession.bookParts()` returns them. The title index is always
+/// included; the `chord_index` flag adds the chord index. `null`/empty titles
+/// and authors produce no title block.
+#[wasm_bindgen(js_name = composeBook)]
+pub fn compose_book(
+    title: Option<String>,
+    author: Option<String>,
+    parts: JsValue,
+    chord_index: bool,
+) -> Result<String, JsValue> {
+    let inputs: Vec<BookPartInput> = serde_wasm_bindgen::from_value(parts)
+        .map_err(|error| JsValue::from_str(&format!("invalid book parts: {error}")))?;
+    let parts = inputs
+        .into_iter()
+        .map(|part| BookPart {
+            body: part.body,
+            chords: part.chords,
+        })
+        .collect::<Vec<_>>();
+    book::compose_book(title.as_deref(), author.as_deref(), &parts, chord_index).map_err(js_error)
 }
