@@ -27,14 +27,45 @@
     <section id="load-screen" class="screen" aria-labelledby="load-heading">
       <h2 id="load-heading">Open a song file</h2>
       <div id="drop-zone">
-        <p>Drop a <strong>.txt</strong> or <strong>.crd</strong> file here,</p>
+        <p>Drop one or more <strong>.txt</strong> or <strong>.crd</strong> files here,</p>
         <p>or</p>
         <label class="file-label">
-          <span class="button-like">Choose a .txt or .crd file</span>
-          <input type="file" id="file-input" accept=".txt,.crd">
+          <span class="button-like">Choose .txt or .crd files</span>
+          <input type="file" id="file-input" accept=".txt,.crd" multiple>
         </label>
+        <p class="hint">One file opens a single song; several files are triaged
+          in order and exported as one book.</p>
         <p id="file-error" role="alert" class="error"></p>
       </div>
+    </section>
+
+    <div id="book-banner" hidden>
+      <p id="book-progress" class="status-bar" role="status" aria-live="polite" aria-atomic="true"></p>
+      <p id="book-file-error" role="alert" class="error" hidden></p>
+    </div>
+
+    <section id="book-form-screen" class="screen" aria-labelledby="book-form-heading" hidden>
+      <h2 id="book-form-heading">Book details</h2>
+      <p class="hint">Both fields are optional and special characters are
+        escaped by the songbook engine. Songs appear in the book in the order
+        the files were chosen.</p>
+      <div class="metadata-field">
+        <label for="book-title-input">Title
+          <input type="text" id="book-title-input" autocomplete="off">
+        </label>
+        <span class="hint">(optional)</span>
+      </div>
+      <div class="metadata-field">
+        <label for="book-author-input">Author
+          <input type="text" id="book-author-input" autocomplete="off">
+        </label>
+        <span class="hint">(optional)</span>
+      </div>
+      <div class="actions">
+        <button type="button" id="book-form-continue" class="primary">Start triage</button>
+        <button type="button" id="book-form-reset">Start over</button>
+      </div>
+      <p id="book-form-status" role="status" aria-live="polite" aria-atomic="true"></p>
     </section>
 
     <section id="metadata-screen" class="screen" aria-labelledby="metadata-heading" hidden>
@@ -43,6 +74,7 @@
         Correct anything that is wrong, then continue.</p>
       <form id="metadata-form" novalidate></form>
       <div class="actions">
+        <button type="button" id="metadata-back" hidden>Back</button>
         <button type="button" id="metadata-continue" class="primary">Continue to triage</button>
       </div>
       <p id="metadata-error" role="alert" class="error"></p>
@@ -72,6 +104,7 @@
         <div class="actions">
           <button type="button" data-action="auto_accept">Accept remaining pending</button>
           <button type="button" data-action="preview">Preview</button>
+          <button type="button" id="triage-back" hidden>Back</button>
           <button type="button" id="start-over">Start over</button>
         </div>
       </div>
@@ -88,8 +121,27 @@
         </label>
         <button type="button" id="download-tex" class="primary">Download .tex</button>
         <button type="button" id="download-pdf">Download PDF</button>
+        <button type="button" id="book-next" class="primary" hidden>Next song</button>
       </div>
       <p id="pdf-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    </section>
+
+    <section id="book-export-screen" class="screen" aria-labelledby="book-export-heading" hidden>
+      <h2 id="book-export-heading">Book export</h2>
+      <p id="book-summary" role="status" aria-live="polite" aria-atomic="true"></p>
+      <div id="book-export-failed" hidden></div>
+      <div class="actions">
+        <button type="button" id="book-export-back" hidden>Back to last song</button>
+        <label class="checkbox-label">
+          <input type="checkbox" id="chord-index-toggle">
+          Include chord index
+        </label>
+        <button type="button" id="book-export-tex" class="primary">Export book .tex</button>
+        <button type="button" id="book-export-pdf">Download book PDF</button>
+        <button type="button" id="book-export-reset">Start over</button>
+      </div>
+      <p id="book-export-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      <p id="book-pdf-status" role="status" aria-live="polite" aria-atomic="true"></p>
     </section>
   </main>
   <footer>

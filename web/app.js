@@ -1,4 +1,4 @@
-import init, { SongbookSession } from "./songbook_wasm.js";
+import init, { SongbookSession, composeBook } from "./songbook_wasm.js";
 
 const ACCEPTED_EXTENSIONS = [".txt", ".crd"];
 
@@ -9,6 +9,11 @@ const state = {
   editing: false,
   pdfEngine: null,
   pdfBusy: false,
+  screen: "load-screen",
+  // Book mode (ADR0019): null in the single-song flow, otherwise
+  // { results: [{ file, name, session, error, loading }, …],
+  //   current, title, author, chordIndex, nav } — memory only (P3).
+  book: null,
 };
 
 const els = {};
@@ -25,23 +30,38 @@ function initEls() {
     "triage-status", "triage-live", "triage-list", "start-over",
     "preview-content", "preview-back", "standalone-toggle", "download-tex",
     "download-pdf", "pdf-status",
+    "book-banner", "book-progress", "book-file-error",
+    "book-form-screen", "book-form-status", "book-title-input",
+    "book-author-input", "book-form-continue", "book-form-reset",
+    "metadata-back", "triage-back", "book-next",
+    "book-export-screen", "book-summary", "book-export-failed",
+    "chord-index-toggle", "book-export-tex", "book-export-pdf",
+    "book-export-status", "book-pdf-status", "book-export-back",
+    "book-export-reset",
   ]) {
     els[id] = $(id);
   }
 }
 
 function showScreen(name) {
-  for (const id of ["load-screen", "metadata-screen", "triage-screen", "preview-screen"]) {
+  state.screen = name;
+  for (const id of ["load-screen", "book-form-screen", "metadata-screen",
+      "triage-screen", "preview-screen", "book-export-screen"]) {
     const visible = id === name;
     els[id].hidden = !visible;
   }
   const titles = {
     "load-screen": "Songbook — Open a song file",
+    "book-form-screen": "Songbook — Book details",
     "metadata-screen": "Songbook — Metadata",
     "triage-screen": "Songbook — Triage",
     "preview-screen": "Songbook — Preview",
+    "book-export-screen": "Songbook — Book export",
   };
   document.title = titles[name] ?? "Songbook";
+  const onSong = name === "metadata-screen" || name === "triage-screen" ||
+    name === "preview-screen";
+  els["book-banner"].hidden = !(state.book && onSong);
 }
 
 function announce(text) {
@@ -171,6 +191,10 @@ function render() {
 
 function renderMetadataPhase(snapshot) {
   showScreen("metadata-screen");
+  els["metadata-back"].hidden = !state.book;
+  if (state.book) {
+    els["metadata-back"].textContent = bookBackLabel();
+  }
   if (!els["metadata-form"].childElementCount) {
     renderMetadata(snapshot);
   }
@@ -191,6 +215,10 @@ function refreshMetadataValues(snapshot) {
 function renderTriage(snapshot) {
   showScreen("triage-screen");
   state.editing = snapshot.editing;
+  els["triage-back"].hidden = !state.book;
+  if (state.book) {
+    els["triage-back"].textContent = bookBackLabel();
+  }
   els["triage-status"].textContent = statusText(snapshot);
   renderTriageList(snapshot);
 }
@@ -327,6 +355,15 @@ function renderPreviewPhase(snapshot) {
   const container = els["preview-content"];
   const previewHadFocus = container.contains(document.activeElement);
   showScreen("preview-screen");
+  const book = Boolean(state.book);
+  els["standalone-toggle"].closest("label").hidden = book;
+  els["download-tex"].hidden = book;
+  els["download-pdf"].hidden = book;
+  els["pdf-status"].hidden = book;
+  els["book-next"].hidden = !book;
+  if (state.book) {
+    els["book-next"].textContent = bookForwardLabel();
+  }
   container.textContent = "";
   for (const row of sessionPreviewRows()) {
     const div = document.createElement("div");
@@ -353,6 +390,204 @@ function sessionPreviewRows() {
 function refresh() {
   state.snapshot = state.session.snapshot();
   render();
+}
+
+// --- Book mode (ADR0019): several files, triaged one at a time in the
+// existing session screens, composed into one book by core's `composeBook`.
+// Everything lives in `state.book` (memory only, P3); order follows file
+// selection; failed files are marked, reported, and excluded — never dropped
+// silently.
+
+function startBook(files) {
+  state.book = {
+    results: files.map((file) => (
+      { file, name: file.name, session: null, error: null, loading: false })),
+    current: -1,
+    title: "",
+    author: "",
+    chordIndex: false,
+    // Navigation epoch: in-flight file loads must not yank the user after
+    // they have moved to another book screen.
+    nav: 0,
+  };
+  showBookForm();
+}
+
+function showBookForm() {
+  const book = state.book;
+  if (!book) return;
+  book.nav += 1;
+  // The form sits "before" every song: going back to it and pressing
+  // Start triage must resume at the first song, not skip it.
+  book.current = -1;
+  els["book-title-input"].value = book.title;
+  els["book-author-input"].value = book.author;
+  showScreen("book-form-screen");
+  const count = book.results.length;
+  els["book-form-status"].textContent =
+    `${count} ${count === 1 ? "file" : "files"} selected. Songs are triaged ` +
+    "one at a time and appear in the book in the order chosen.";
+  els["book-title-input"].focus();
+}
+
+function startBookTriage() {
+  const book = state.book;
+  if (!book) return;
+  // Raw strings: composeBook does the LaTeX escaping in core.
+  book.title = els["book-title-input"].value;
+  book.author = els["book-author-input"].value;
+  bookForward();
+}
+
+function bookForward() {
+  const book = state.book;
+  if (!book) return;
+  const here = book.results[book.current];
+  if (here && here.loading) return; // wait for the in-flight load
+  for (let i = book.current + 1; i < book.results.length; i += 1) {
+    const entry = book.results[i];
+    if (entry.error) continue;  // failed files stay excluded
+    if (entry.loading) return;
+    book.nav += 1;
+    book.current = i;
+    if (entry.session) showSong(i);
+    else loadBookSong(i);
+    return;
+  }
+  book.nav += 1;
+  showBookExport();
+}
+
+function bookBack() {
+  const book = state.book;
+  if (!book) return;
+  for (let i = book.current - 1; i >= 0; i -= 1) {
+    if (book.results[i].session) {
+      book.nav += 1;
+      book.current = i;
+      showSong(i);
+      return;
+    }
+  }
+  showBookForm();
+}
+
+function bookExportBack() {
+  const book = state.book;
+  if (!book) return;
+  for (let i = book.results.length - 1; i >= 0; i -= 1) {
+    if (book.results[i].session) {
+      book.nav += 1;
+      book.current = i;
+      showSong(i);
+      return;
+    }
+  }
+  showBookForm();
+}
+
+// Shows the song at `index` in whatever phase its session is in (metadata,
+// triage, or preview), so revisits resume exactly where they left off.
+function showSong(index) {
+  const book = state.book;
+  const entry = book.results[index];
+  state.session = entry.session;
+  state.fileName = entry.name;
+  els["metadata-form"].textContent = "";
+  refresh();
+  els["book-progress"].textContent =
+    `Song ${index + 1} of ${book.results.length} — ${entry.name}`;
+  document.title = `Songbook — Song ${index + 1} of ${book.results.length}`;
+}
+
+function loadBookSong(index) {
+  const book = state.book;
+  const entry = book.results[index];
+  const nav = book.nav;
+  entry.loading = true;
+  const fail = (message) => {
+    entry.loading = false;
+    if (entry.error) return;
+    entry.error = message;
+    const notice = els["book-file-error"];
+    notice.hidden = false;
+    notice.textContent = `Could not use “${entry.name}”: ${message} ` +
+      "It was skipped and will not appear in the book.";
+    if (state.book === book && book.current === index && book.nav === nav) {
+      bookForward();
+    }
+  };
+  const extension = entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase();
+  if (!ACCEPTED_EXTENSIONS.includes(extension)) {
+    fail("unsupported file type (please use .txt or .crd files)");
+    return;
+  }
+  entry.file.text().then((raw) => {
+    if (state.book !== book) return; // the book was started over
+    entry.loading = false;
+    if (entry.error || entry.session) return; // another load already decided
+    try {
+      entry.session = new SongbookSession(raw);
+    } catch (error) {
+      fail(String(error));
+      return;
+    }
+    if (book.current === index && book.nav === nav) showSong(index);
+  }).catch((error) => {
+    if (state.book !== book) return;
+    fail(`could not be read (${error})`);
+  });
+}
+
+function bookBackLabel() {
+  const book = state.book;
+  for (let i = book.current - 1; i >= 0; i -= 1) {
+    if (book.results[i].session) return "Back to previous song";
+  }
+  return "Back to book details";
+}
+
+function bookForwardLabel() {
+  const book = state.book;
+  for (let i = book.current + 1; i < book.results.length; i += 1) {
+    if (!book.results[i].error) return "Next song";
+  }
+  return "Continue to book export";
+}
+
+function showBookExport() {
+  const book = state.book;
+  if (!book) return;
+  book.nav += 1;
+  const done = book.results.filter((entry) => entry.session).length;
+  const failed = book.results.filter((entry) => entry.error);
+  showScreen("book-export-screen");
+  els["book-summary"].textContent =
+    `${done} ${done === 1 ? "song" : "songs"} ready for the book` +
+    (failed.length
+      ? ` · ${failed.length} ${failed.length === 1 ? "file" : "files"} skipped`
+      : "") + ".";
+  const failedBox = els["book-export-failed"];
+  failedBox.textContent = "";
+  for (const entry of failed) {
+    const line = document.createElement("p");
+    line.className = "error";
+    line.textContent = `Skipped “${entry.name}”: ${entry.error}`;
+    failedBox.append(line);
+  }
+  failedBox.hidden = failed.length === 0;
+  els["chord-index-toggle"].checked = book.chordIndex;
+  const exportable = done > 0;
+  els["book-export-tex"].disabled = !exportable;
+  els["book-export-pdf"].disabled = !exportable;
+  els["book-export-back"].hidden = !exportable;
+  bookStatus(exportable ? "" :
+    "No songs loaded successfully, so there is nothing to export. " +
+    "Press Start over to choose files again.");
+  els["book-pdf-status"].textContent = "";
+  els["book-pdf-status"].className = "";
+  if (exportable) els["book-export-tex"].focus();
+  else els["book-export-reset"].focus();
 }
 
 function buildTex() {
@@ -406,6 +641,20 @@ function pdfProblems(result) {
   return problems.join("; ");
 }
 
+// Lazy PDF-engine bootstrap shared by the single-song and book exports.
+// `status` is the pdfStatus-style reporter of the calling screen.
+async function ensurePdfEngine(status) {
+  if (!state.pdfEngine) {
+    status("Loading PDF engine…", "hint");
+    const pdf = await import("./pdf-assets/pdf-engine.js");
+    state.pdfEngine = await pdf.createPdfEngine({ assetBase: "pdf-assets" });
+    // Fetch the engine/assets under the loading label; compile() only
+    // starts once the worker has actually reported ready.
+    await state.pdfEngine.ready();
+  }
+  return state.pdfEngine;
+}
+
 async function downloadPdf() {
   if (state.pdfBusy) return;
   state.pdfBusy = true;
@@ -417,14 +666,7 @@ async function downloadPdf() {
       return;
     }
     const stem = state.fileName.replace(/\.[^.]+$/, "") || "song";
-    if (!state.pdfEngine) {
-      pdfStatus("Loading PDF engine…", "hint");
-      const pdf = await import("./pdf-assets/pdf-engine.js");
-      state.pdfEngine = await pdf.createPdfEngine({ assetBase: "pdf-assets" });
-      // Fetch the engine/assets under the loading label; compile() only
-      // starts once the worker has actually reported ready.
-      await state.pdfEngine.ready();
-    }
+    await ensurePdfEngine(pdfStatus);
     pdfStatus("Compiling PDF…", "hint");
     const result = await state.pdfEngine.compile(tex);
     const problems = pdfProblems(result);
@@ -459,17 +701,104 @@ async function downloadPdf() {
   }
 }
 
+// --- Book export (ADR0019): composition happens only here, after every
+// song's triage is complete. LaTeX is never assembled in JavaScript (P1/P2):
+// each completed session hands over its `{ body, chords }` part and core's
+// `composeBook` renders the standalone book document.
+
+function bookStatus(text, kind = "") {
+  els["book-export-status"].textContent = text;
+  els["book-export-status"].className = kind;
+}
+
+function bookPdfStatus(text, kind) {
+  els["book-pdf-status"].textContent = text;
+  els["book-pdf-status"].className = kind;
+}
+
+function bookStem() {
+  const stem = state.book.title.trim()
+    .replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+  return stem || "book";
+}
+
+function buildBookTex() {
+  const book = state.book;
+  const parts = [];
+  for (const entry of book.results) {
+    if (entry.session) parts.push(entry.session.bookParts());
+  }
+  return composeBook(
+    book.title.trim() || null, book.author.trim() || null,
+    parts, book.chordIndex);
+}
+
+function exportBookTex() {
+  if (!state.book) return;
+  try {
+    const tex = buildBookTex();
+    const stem = bookStem();
+    saveBlob(new Blob([tex], { type: "text/x-tex" }), `${stem}.tex`);
+    bookStatus(`Downloaded ${stem}.tex.`);
+  } catch (error) {
+    bookStatus(`Book export failed: ${error}`, "error");
+  }
+}
+
+async function downloadBookPdf() {
+  const book = state.book;
+  if (!book || state.pdfBusy) return;
+  state.pdfBusy = true;
+  els["book-export-pdf"].disabled = true;
+  try {
+    const tex = buildBookTex();
+    const stem = bookStem();
+    const engine = await ensurePdfEngine(bookPdfStatus);
+    bookPdfStatus("Compiling book PDF…", "hint");
+    const result = await engine.compile(tex);
+    const problems = pdfProblems(result);
+    if (!result.bytes || !result.blob) {
+      bookPdfStatus("PDF compilation produced no output" +
+        (problems ? ` (${problems})` : "") + ".", "error");
+      return;
+    }
+    saveBlob(result.blob, `${stem}.pdf`);
+    bookPdfStatus(problems
+      ? `Downloaded ${stem}.pdf with warnings: ${problems}.`
+      : `Downloaded ${stem}.pdf.`,
+      problems ? "warning" : "hint");
+  } catch (error) {
+    const poisoned = String(error).includes("poisoned compile");
+    bookPdfStatus(poisoned
+      ? "PDF compilation failed (the engine hit an unrecoverable state). " +
+        "Press Download book PDF to try again."
+      : `PDF export failed: ${error}`,
+      "error");
+    if (!poisoned) {
+      await state.pdfEngine?.cancel();
+      state.pdfEngine = null;
+    }
+  } finally {
+    state.pdfBusy = false;
+    els["book-export-pdf"].disabled = false;
+  }
+}
+
 function startOver() {
-  const confirmed = window.confirm(
-    "Start over? All triage decisions for this song will be lost.");
+  const confirmed = window.confirm(state.book
+    ? "Start over? The whole book — every song's triage decisions — will be lost."
+    : "Start over? All triage decisions for this song will be lost.");
   if (!confirmed) return;
   state.session = null;
   state.snapshot = null;
   state.fileName = "";
   state.editing = false;
+  state.book = null;
   els["metadata-form"].textContent = "";
   els["file-input"].value = "";
   els["file-error"].textContent = "";
+  els["book-file-error"].hidden = true;
+  els["book-file-error"].textContent = "";
   showScreen("load-screen");
   els["file-input"].focus();
 }
@@ -502,6 +831,10 @@ function setupGlobalKeys() {
     if (target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement) {
+      return;
+    }
+    if (state.screen !== "triage-screen" &&
+        state.screen !== "preview-screen") {
       return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) {
@@ -549,8 +882,9 @@ function setupControls() {
   const zone = els["drop-zone"];
 
   els["file-input"].addEventListener("change", () => {
-    const file = els["file-input"].files[0];
-    if (file) loadFile(file);
+    const files = Array.from(els["file-input"].files ?? []);
+    if (files.length === 1) loadFile(files[0]);
+    else if (files.length > 1) startBook(files);
   });
 
   for (const type of ["dragenter", "dragover"]) {
@@ -564,12 +898,15 @@ function setupControls() {
   }
   zone.addEventListener("drop", (event) => {
     event.preventDefault();
-    const file = event.dataTransfer?.files?.[0];
-    if (file) loadFile(file);
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (files.length === 1) loadFile(files[0]);
+    else if (files.length > 1) startBook(files);
   });
 
   els["metadata-continue"].addEventListener("click", () => applyAction("confirm"));
+  els["metadata-back"].addEventListener("click", bookBack);
   els["start-over"].addEventListener("click", startOver);
+  els["triage-back"].addEventListener("click", bookBack);
 
   for (const button of els["triage-screen"].querySelectorAll("button[data-action]")) {
     button.addEventListener("click", () => {
@@ -580,12 +917,44 @@ function setupControls() {
   }
 
   els["preview-back"].addEventListener("click", () => applyAction("back"));
+  els["book-next"].addEventListener("click", bookForward);
   els["download-tex"].addEventListener("click", downloadTex);
   els["download-pdf"].addEventListener("click", downloadPdf);
   els["standalone-toggle"].addEventListener("change", () => announce(
     els["standalone-toggle"].checked
       ? "Standalone document enabled."
       : "Package song format selected."));
+
+  els["book-form-continue"].addEventListener("click", startBookTriage);
+  els["book-form-reset"].addEventListener("click", startOver);
+  for (const id of ["book-title-input", "book-author-input"]) {
+    const input = els[id];
+    input.addEventListener("input", () => {
+      const book = state.book;
+      if (!book) return;
+      // Raw strings: composeBook does the LaTeX escaping in core.
+      book.title = els["book-title-input"].value;
+      book.author = els["book-author-input"].value;
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        els["book-form-continue"].focus();
+      }
+    });
+  }
+  els["chord-index-toggle"].addEventListener("change", () => {
+    const book = state.book;
+    if (!book) return;
+    book.chordIndex = els["chord-index-toggle"].checked;
+    bookStatus(book.chordIndex
+      ? "Chord index included in the book."
+      : "Chord index excluded from the book.");
+  });
+  els["book-export-tex"].addEventListener("click", exportBookTex);
+  els["book-export-pdf"].addEventListener("click", downloadBookPdf);
+  els["book-export-back"].addEventListener("click", bookExportBack);
+  els["book-export-reset"].addEventListener("click", startOver);
 }
 
 async function boot() {

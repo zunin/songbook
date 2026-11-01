@@ -167,6 +167,9 @@ input:focus-visible, [tabindex]:focus-visible {
   margin: 0.5rem 0 1rem;
 }
 
+#book-banner { margin-bottom: 1rem; }
+#book-export-failed p { margin: 0.25rem 0; }
+
 #triage-list {
   margin: 0;
   padding: 0;
