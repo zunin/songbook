@@ -33,14 +33,14 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && pdftotext -v 2>&1 | head -1 && pdfinfo -v 2>&1 | head -1
 
-# Node >= 20 is required to instantiate the songbook wasm: rustc 1.88 emits
-# wasm typed function references, which node 18's V8 rejects. Debian
-# bookworm ships node 18, so pin the LTS tarball (house style: pinned
-# version + sha256, like tectonic above). Keep NODE_VERSION in step with
-# supported LTS; the PDF smoke and worker run under it.
-ARG NODE_VERSION=22.23.4
+# Node >= 26 is required to instantiate the songbook wasm: rustc 1.88 emits
+# wasm value types (typed function references) that node 18/22's V8 reject
+# at validation. The project owner's browser and host node 26 accept them,
+# so pin node 26 (LTS since 2026-10). House style: pinned version + sha256,
+# like tectonic above.
+ARG NODE_VERSION=26.13.0
 RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
-    && echo "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce  /tmp/node.tar.xz" | sha256sum -c - \
+    && echo "d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997  /tmp/node.tar.xz" | sha256sum -c - \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
     && rm /tmp/node.tar.xz \
     && node --version && pdftotext -v 2>&1 | head -1
