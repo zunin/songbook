@@ -29,8 +29,8 @@ typesetting.
 
 | Container | Path | Role |
 |---|---|---|
-| `songbook-core` | `crates/songbook-core` | All semantics: `parser/` (chord, classify, song), `triage`, `latex/` (render), `preview`, `audit`. Owns P1/P2. |
-| CLI + TUI | `src/` (`main`, `batch`, `tui/`) | Interactive triage (ratatui), batch conversion, non-interactive audit (ADR0013/0015). Thin view over core. |
+| `songbook-core` | `crates/songbook-core` | All semantics: `parser/` (chord, classify, song), `triage`, `latex/` (render), `preview`, `audit`, `book` (manifests + book rendering, ADR0018). Owns P1/P2. |
+| CLI + TUI | `src/` (`main`, `batch`, `book`, `tui/`) | Interactive triage (ratatui), batch conversion, book compilation from plain-text manifests, non-interactive audit (ADR0013/0015/0018). Thin view over core. |
 | wasm Session | `crates/songbook-wasm` | `Session` API over core: `snapshot`, `handle_action`/`handle_key`, `export_tex`. The browser's only doorway to semantics. |
 | Web app | `web/` | Static, client-only vanilla JS (ADR0016): load file → metadata → triage → preview → `.tex` download; PDF via the lazy Tectonic-wasm engine (`web/pdf-engine.js` + worker + pinned assets, ADR0017). |
 | PDF asset pipeline | `web/build-pdf-assets.sh`, `web/pdf/` | Hash-pinned, offline-replayable build of the engine + TeX pack (docstrip-generated `songs.sty`, BaKoMa CM). Determinism enforced by pins. |
@@ -46,6 +46,11 @@ typesetting.
    → latex render (songs package; standalone or body)
    → .tex  ──▶ native Tectonic (dev/CI verification, byte-exact golden files)
            └─▶ browser Tectonic-wasm (user-facing PDF, same engine class)
+
+A book is a plain-text manifest → `songbook-core::book` → one `.tex` that
+composes each song's unchanged body, plus the `songs` package's title index
+(ADR0018). In the browser, book PDFs will need the package's three-step index
+pipeline (`songidx.lua`) or a pre-seeded `.sbx` — a Phase 2 engine work item.
 ```
 
 ## Fitness functions
@@ -55,6 +60,8 @@ typesetting.
   byte-for-byte in extracted text (ADR0017, `web/pdf/test/smoke-node.mjs`).
 - Build pins: every upstream source and the built pack are sha256-pinned;
   mismatch fails the build (ADR0017).
+- Golden book fixture: the committed `examples/demo-book.tex` is byte-exact,
+  and the PDF smoke also compiles a book fixture (ADR0018).
 
 ## Invariants
 
