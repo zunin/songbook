@@ -25,3 +25,11 @@ RUN rustup target add wasm32-unknown-unknown \
     && cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked \
     && wasm-bindgen --version
 USER root
+
+# Node.js runs the PDF asset build's smoke test (the default final step of
+# web/build-pdf-assets.sh) and the external PDF smoke; Debian bookworm's
+# nodejs covers the plain-stdlib usage in web/pdf/test/smoke-node.mjs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version
