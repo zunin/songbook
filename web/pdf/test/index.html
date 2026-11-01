@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- Offline self-test page for the browser-local PDF engine module.
+     Loads web/pdf-engine.js (deployed at ../pdf-engine.js), compiles the
+     standalone songs fixture entirely inside the browser via the dedicated
+     worker, and displays the result. No network requests leave the origin. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>PDF engine self-test</title>
+</head>
+<body>
+<h1>PDF engine self-test</h1>
+<pre id="log"></pre>
+<script type="module">
+import { createPdfEngine } from "../pdf-engine.js";
+
+const log = (...a) => {
+  document.getElementById("log").textContent += a.join(" ") + "\n";
+};
+log("page loaded at", new Date().toISOString());
+
+const tex = await (await fetch("./fixtures/let-it-be.tex")).text();
+log("fixture loaded:", tex.length, "chars");
+
+const engine = await createPdfEngine({ assetBase: ".." });
+log("engine created");
+
+const timings = {};
+await engine.compile(tex, { jobname: "main" }); // warm-up
+const r2 = await engine.compile(tex, { jobname: "main" });
+log("warm compile:", r2.status, r2.timings.pdfBytes, "B,", r2.timings.compileMs, "ms,",
+    "missingFiles:", r2.missingFiles.length, "benign:", r2.benignProbes);
+
+// test cancel + recreate
+await engine.cancel();
+const r3 = await engine.compile(tex, { jobname: "main" });
+log("post-cancel compile:", r3.status, r3.timings.pdfBytes, "B,", r3.timings.compileMs, "ms");
+
+// PDF text check (decode via a simple extraction using the blob URL is not
+// available offline; instead we verify byte length + PDF magic header)
+const bytes = r3.bytes;
+log("pdf magic:", bytes[0] === 0x25 && bytes[1] === 0x50 ? "OK" : "BAD", bytes.length, "bytes");
+
+if (r3.status === "spotless" && bytes && bytes[0] === 0x25) {
+  document.title = "PASS";
+  log("RESULT: PASS");
+} else {
+  document.title = "FAIL";
+  log("RESULT: FAIL", JSON.stringify(r3.diagnostics ?? []));
+}
+</script>
+</body>
+</html>

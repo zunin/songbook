@@ -7,6 +7,8 @@ const state = {
   snapshot: null,
   fileName: "",
   editing: false,
+  pdfEngine: null,
+  pdfBusy: false,
 };
 
 const els = {};
@@ -22,6 +24,7 @@ function initEls() {
     "metadata-form", "metadata-continue", "metadata-error",
     "triage-status", "triage-live", "triage-list", "start-over",
     "preview-content", "preview-back", "standalone-toggle", "download-tex",
+    "download-pdf", "pdf-status",
   ]) {
     els[id] = $(id);
   }
@@ -352,25 +355,107 @@ function refresh() {
   render();
 }
 
-function downloadTex() {
+function buildTex() {
   const session = state.session;
-  if (!session) return;
-  const standalone = els["standalone-toggle"].checked;
+  if (!session) return null;
+  return session.exportTex(els["standalone-toggle"].checked);
+}
+
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadTex() {
   try {
-    const tex = session.exportTex(standalone);
+    const tex = buildTex();
+    if (tex === null) return;
     const stem = state.fileName.replace(/\.[^.]+$/, "") || "song";
-    const blob = new Blob([tex], { type: "text/x-tex" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${stem}.tex`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    saveBlob(new Blob([tex], { type: "text/x-tex" }), `${stem}.tex`);
     announce(`Downloaded ${stem}.tex.`);
   } catch (error) {
     announce(`Export failed: ${error}`);
+  }
+}
+
+function pdfStatus(text, kind) {
+  els["pdf-status"].textContent = text;
+  els["pdf-status"].className = kind;
+  announce(text);
+}
+
+function pdfProblems(result) {
+  const problems = [];
+  if (result.status !== "spotless") {
+    problems.push(`compile status “${result.status}”`);
+  }
+  if (Array.isArray(result.missingFiles) && result.missingFiles.length > 0) {
+    problems.push(`missing files: ${result.missingFiles.join(", ")}`);
+  }
+  if (Array.isArray(result.diagnostics) && result.diagnostics.length > 0) {
+    const lines = result.diagnostics.map(
+      (entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)));
+    problems.push(`diagnostics: ${lines.join(" | ")}`);
+  }
+  return problems.join("; ");
+}
+
+async function downloadPdf() {
+  if (state.pdfBusy) return;
+  state.pdfBusy = true;
+  els["download-pdf"].disabled = true;
+  try {
+    const tex = buildTex();
+    if (tex === null) {
+      pdfStatus("No song is loaded.", "error");
+      return;
+    }
+    const stem = state.fileName.replace(/\.[^.]+$/, "") || "song";
+    if (!state.pdfEngine) {
+      pdfStatus("Loading PDF engine…", "hint");
+      const pdf = await import("./pdf-assets/pdf-engine.js");
+      state.pdfEngine = await pdf.createPdfEngine({ assetBase: "pdf-assets" });
+      // Fetch the engine/assets under the loading label; compile() only
+      // starts once the worker has actually reported ready.
+      await state.pdfEngine.ready();
+    }
+    pdfStatus("Compiling PDF…", "hint");
+    const result = await state.pdfEngine.compile(tex);
+    const problems = pdfProblems(result);
+    if (!result.bytes || !result.blob) {
+      pdfStatus("PDF compilation produced no output" +
+        (problems ? ` (${problems})` : "") + ".", "error");
+      return;
+    }
+    saveBlob(result.blob, `${stem}.pdf`);
+    pdfStatus(problems
+      ? `Downloaded ${stem}.pdf with warnings: ${problems}.`
+      : `Downloaded ${stem}.pdf.`,
+      problems ? "warning" : "hint");
+  } catch (error) {
+    const poisoned = String(error).includes("poisoned compile");
+    pdfStatus(poisoned
+      ? "PDF compilation failed (the engine hit an unrecoverable state). " +
+        "Press Download PDF to try again."
+      : `PDF export failed: ${error}`,
+      "error");
+    if (!poisoned) {
+      // Drop the wedged worker and forget the engine so a retry re-enters
+      // the honest "Loading PDF engine…" path; the HTTP cache makes the
+      // refetch cheap. A poisoned compile has already respawned its worker
+      // and the engine object stays usable, so it is kept.
+      await state.pdfEngine?.cancel();
+      state.pdfEngine = null;
+    }
+  } finally {
+    state.pdfBusy = false;
+    els["download-pdf"].disabled = false;
   }
 }
 
@@ -496,6 +581,7 @@ function setupControls() {
 
   els["preview-back"].addEventListener("click", () => applyAction("back"));
   els["download-tex"].addEventListener("click", downloadTex);
+  els["download-pdf"].addEventListener("click", downloadPdf);
   els["standalone-toggle"].addEventListener("change", () => announce(
     els["standalone-toggle"].checked
       ? "Standalone document enabled."

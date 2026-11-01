@@ -265,8 +265,13 @@ input:focus-visible, [tabindex]:focus-visible {
   color: #b00020;
   font-weight: 600;
 }
+.warning {
+  color: #946800;
+  font-weight: 600;
+}
 @media (prefers-color-scheme: dark) {
   .error { color: #ff8a8a; }
+  .warning { color: #ffd54d; }
 }
 
 .visually-hidden {

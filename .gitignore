@@ -5,3 +5,6 @@
 *.pdf
 out/
 web/dist/
+web/.dist-root-orig/
+web/pdf/.cache/
+__pycache__/

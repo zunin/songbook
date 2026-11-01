@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; require-trusted-types-for 'script'">
+        content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; require-trusted-types-for 'script'; trusted-types pdf-engine">
   <meta name="description" content="Private browser-local song editor. Your song file never leaves this device.">
   <link rel="icon" href="data:,">
   <title>Songbook</title>
@@ -87,7 +87,9 @@
           Standalone document (full LaTeX file)
         </label>
         <button type="button" id="download-tex" class="primary">Download .tex</button>
+        <button type="button" id="download-pdf">Download PDF</button>
       </div>
+      <p id="pdf-status" role="status" aria-live="polite" aria-atomic="true"></p>
     </section>
   </main>
   <footer>
