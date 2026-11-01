@@ -30,6 +30,7 @@ function initEls() {
     "triage-status", "triage-live", "triage-list", "start-over",
     "preview-content", "preview-back", "standalone-toggle", "download-tex",
     "download-pdf", "pdf-status",
+    "transpose-down", "transpose-up", "transpose-reset", "transpose-label",
     "book-banner", "book-progress", "book-file-error",
     "book-form-screen", "book-form-status", "book-title-input",
     "book-author-input", "book-form-continue", "book-form-reset",
@@ -353,7 +354,10 @@ function moveToLine(targetIndex) {
 
 function renderPreviewPhase(snapshot) {
   const container = els["preview-content"];
-  const previewHadFocus = container.contains(document.activeElement);
+  // Clicking a transpose control re-renders the preview; keep focus on the
+  // button instead of yanking it into the scroll container.
+  const previewHadFocus = container.contains(document.activeElement) ||
+    TRANSPOSE_IDS.some((id) => els[id] === document.activeElement);
   showScreen("preview-screen");
   const book = Boolean(state.book);
   els["standalone-toggle"].closest("label").hidden = book;
@@ -364,6 +368,7 @@ function renderPreviewPhase(snapshot) {
   if (state.book) {
     els["book-next"].textContent = bookForwardLabel();
   }
+  renderTransposeLabel(snapshot);
   container.textContent = "";
   for (const row of sessionPreviewRows()) {
     const div = document.createElement("div");
@@ -376,6 +381,67 @@ function renderPreviewPhase(snapshot) {
     .reduce((top, row) => top + row.offsetHeight, 0);
   if (!previewHadFocus) container.focus();
   announce("Preview updated.");
+}
+
+// --- Transposition (roadmap item 3): the session keeps the net offset, so
+// +1 then −1 is a net zero, and every derived view (preview rows, the .tex
+// and PDF downloads, and in book mode each song's book part) follows it.
+
+const TRANSPOSE_IDS = ["transpose-down", "transpose-up", "transpose-reset"];
+
+function renderTransposeLabel(snapshot) {
+  const label = els["transpose-label"];
+  const offset = snapshot.transpose ?? 0;
+  if (offset === 0) {
+    label.hidden = true;
+    label.textContent = "";
+    return;
+  }
+  label.hidden = false;
+  label.textContent = `Transposed ${offset > 0 ? "+" : "−"}${Math.abs(offset)}`;
+}
+
+function applyTranspose(delta) {
+  const session = state.session;
+  if (!session) return;
+  try {
+    state.snapshot = session.transpose(delta);
+  } catch (error) {
+    announce(`Transpose failed: ${error}`);
+    return;
+  }
+  render();
+  announceTranspose(delta);
+}
+
+function announceTranspose(delta) {
+  const offset = state.snapshot?.transpose ?? 0;
+  if (offset === 0) {
+    announce("Transposition reset to the original key.");
+    return;
+  }
+  const step = Math.abs(delta) === 1 ? "one semitone" : `${Math.abs(delta)} semitones`;
+  const direction = delta > 0 ? "up" : "down";
+  const first = firstPreviewChord();
+  announce(`Transposed ${direction} ${step} — now at ${
+    offset > 0 ? "+" : "−"}${Math.abs(offset)}` +
+    (first ? `, first chord ${first}.` : "."));
+}
+
+// The first chord of the refreshed preview, for the spoken announcement:
+// chord-only rows hold bare tokens, lyric rows hold `[Chord]` markers.
+function firstPreviewChord() {
+  for (const row of sessionPreviewRows()) {
+    if (row.style === "chord") {
+      for (const token of row.text.trim().split(/\s+/)) {
+        if (/^[A-G][#b]?/.test(token)) return token;
+      }
+    } else if (row.style === "lyric") {
+      const match = row.text.match(/\[([A-G][#b]?[^\]]*)\]/);
+      if (match) return match[1];
+    }
+  }
+  return null;
 }
 
 function sessionPreviewRows() {
@@ -924,6 +990,13 @@ function setupControls() {
     els["standalone-toggle"].checked
       ? "Standalone document enabled."
       : "Package song format selected."));
+  els["transpose-down"].addEventListener("click", () => applyTranspose(-1));
+  els["transpose-up"].addEventListener("click", () => applyTranspose(1));
+  els["transpose-reset"].addEventListener("click", () => {
+    const offset = state.snapshot?.transpose ?? 0;
+    if (offset !== 0) applyTranspose(-offset);
+    else announce("Transposition is already at the original key.");
+  });
 
   els["book-form-continue"].addEventListener("click", startBookTriage);
   els["book-form-reset"].addEventListener("click", startOver);

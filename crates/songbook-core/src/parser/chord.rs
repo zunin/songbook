@@ -30,6 +30,18 @@ pub struct ChordToken {
     pub text: String,
 }
 
+/// A [`ChordToken`] plus the byte span of its bare text inside the scanned
+/// line, so callers can rewrite tokens in place while keeping every other
+/// column (used by transposition; `text_start`/`text_end` are byte offsets).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChordTokenSpan {
+    pub token: ChordToken,
+    /// Byte offset of the first byte of `token.text` in the scanned line.
+    pub text_start: usize,
+    /// Byte offset one past the last byte of `token.text`.
+    pub text_end: usize,
+}
+
 /// Returns true if the token is a valid chord name.
 pub fn is_chord(token: &str) -> bool {
     chord_re().is_match(token)
@@ -43,37 +55,83 @@ pub fn inline_chords(line: &str) -> Vec<String> {
         .collect()
 }
 
+/// Rewrites every inline `[marker]` through `map`, keeping the brackets and
+/// all surrounding text verbatim. A `None` from `map` leaves that marker
+/// unchanged (non-chord brackets are not the mapper's business).
+pub fn map_inline_chords(line: &str, mut map: impl FnMut(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut last = 0;
+    for captures in inline_chord_re().captures_iter(line) {
+        let whole = captures.get(0).unwrap();
+        out.push_str(&line[last..whole.start()]);
+        match map(&captures[1]) {
+            Some(replacement) => {
+                out.push('[');
+                out.push_str(&replacement);
+                out.push(']');
+            }
+            None => out.push_str(whole.as_str()),
+        }
+        last = whole.end();
+    }
+    out.push_str(&line[last..]);
+    out
+}
+
 /// Splits a line into whitespace/bar/comma separated tokens, keeping the
 /// character column of each token. Purely punctuational tokens are dropped.
 pub fn chord_tokens(line: &str) -> Vec<ChordToken> {
-    let mut tokens = Vec::new();
+    chord_token_spans(line)
+        .into_iter()
+        .map(|span| span.token)
+        .collect()
+}
+
+/// [`chord_tokens`] with the byte span of each token's bare text, for callers
+/// that rewrite a line while preserving token columns.
+pub fn chord_token_spans(line: &str) -> Vec<ChordTokenSpan> {
+    let mut spans = Vec::new();
     let mut start: Option<(usize, usize)> = None;
 
     for (col, (byte, ch)) in line.char_indices().enumerate() {
         let delimiter = ch.is_whitespace() || matches!(ch, '|' | ',' | ';');
         if delimiter {
             if let Some((start_byte, start_col)) = start.take() {
-                push_token(&mut tokens, &line[start_byte..byte], start_col);
+                push_span(&mut spans, line, start_byte, start_col, byte);
             }
         } else if start.is_none() {
             start = Some((byte, col));
         }
     }
     if let Some((start_byte, start_col)) = start {
-        push_token(&mut tokens, &line[start_byte..], start_col);
+        push_span(&mut spans, line, start_byte, start_col, line.len());
     }
-    tokens
+    spans
 }
 
-fn push_token(tokens: &mut Vec<ChordToken>, raw: &str, start_col: usize) {
+fn push_span(
+    spans: &mut Vec<ChordTokenSpan>,
+    line: &str,
+    start_byte: usize,
+    start_col: usize,
+    end_byte: usize,
+) {
+    let raw = &line[start_byte..end_byte];
     let leading = raw.chars().take_while(|c| is_wrapping_punct(*c)).count();
     let trimmed = raw.trim_matches(is_wrapping_punct);
     if trimmed.is_empty() || trimmed.chars().all(|c| !c.is_alphanumeric()) {
         return;
     }
-    tokens.push(ChordToken {
-        col: start_col + leading,
-        text: trimmed.to_string(),
+    // Wrapping punctuation is ASCII, so the leading char count is the byte
+    // offset of the trimmed text.
+    let text_start = start_byte + leading;
+    spans.push(ChordTokenSpan {
+        token: ChordToken {
+            col: start_col + leading,
+            text: trimmed.to_string(),
+        },
+        text_start,
+        text_end: text_start + trimmed.len(),
     });
 }
 
@@ -203,6 +261,53 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn spans_point_at_the_bare_token_text() {
+        let source = "| (Am)  F#m7 |";
+        let spans = chord_token_spans(source);
+        assert_eq!(
+            spans,
+            vec![
+                ChordTokenSpan {
+                    token: ChordToken {
+                        col: 3,
+                        text: "Am".into()
+                    },
+                    text_start: 3,
+                    text_end: 5,
+                },
+                ChordTokenSpan {
+                    token: ChordToken {
+                        col: 8,
+                        text: "F#m7".into()
+                    },
+                    text_start: 8,
+                    text_end: 12,
+                },
+            ]
+        );
+        for span in &spans {
+            assert_eq!(&source[span.text_start..span.text_end], span.token.text);
+        }
+    }
+
+    #[test]
+    fn spans_handle_multibyte_token_text() {
+        let source = "C°7  F";
+        let spans = chord_token_spans(source);
+        assert_eq!(spans[0].token.text, "C°7");
+        assert_eq!(&source[spans[0].text_start..spans[0].text_end], "C°7");
+        assert_eq!(spans[1].token.col, 5);
+    }
+
+    #[test]
+    fn maps_inline_chords_and_leaves_the_rest_verbatim() {
+        let mapped = map_inline_chords("A [Am]B [Hx]C [F]D", |chord| {
+            (chord == "Am").then(|| "Bm".to_string())
+        });
+        assert_eq!(mapped, "A [Bm]B [Hx]C [F]D");
     }
 
     #[test]

@@ -4,15 +4,20 @@ use crate::model::{self, BookPartSnapshot, PreviewRowSnapshot, SessionSnapshot};
 use songbook_core::book;
 use songbook_core::latex::render::render;
 use songbook_core::parser::classify::parse;
+use songbook_core::transpose::transpose_song;
 use songbook_core::triage::{Key, Phase, TriageState};
 
 /// Browser-friendly state machine over a single in-memory song.
 ///
 /// The session owns the raw-line triage model from `songbook-core`; nothing is
-/// written to disk and no network or PDF code is involved.
+/// written to disk and no network or PDF code is involved. An optional
+/// transposition offset (see [`Session::transpose`]) applies on top of the
+/// triaged song for every derived view.
 #[derive(Debug)]
 pub struct Session {
     state: TriageState,
+    /// Net transposition in semitones applied on top of the triaged song.
+    transpose: i32,
 }
 
 impl Session {
@@ -27,22 +32,40 @@ impl Session {
         }
         Ok(Self {
             state: TriageState::new(song, raw),
+            transpose: 0,
         })
+    }
+
+    /// Transposes the current triaged song by `delta` semitones (negative =
+    /// down). Delta-based: +2 then −1 leaves a net +1. The offset applies to
+    /// every derived view — snapshots, preview rows, exports, and book parts —
+    /// and survives triage edits and undo, because the triage model keeps the
+    /// untransposed raw lines and the offset is applied on top.
+    pub fn transpose(&mut self, delta: i32) -> Result<(), SessionError> {
+        self.transpose += delta;
+        Ok(())
+    }
+
+    /// The triaged song with the session's transposition applied.
+    fn current_song(&self) -> songbook_core::parser::song::Song {
+        let mut song = self.state.finish();
+        transpose_song(&mut song, self.transpose);
+        song
     }
 
     /// Full snapshot of metadata, phase, and every raw review line.
     pub fn snapshot(&self) -> SessionSnapshot {
-        model::snapshot(&self.state)
+        model::snapshot(&self.state, self.transpose)
     }
 
     /// Structure preview rows for the current decisions and metadata.
     pub fn preview_rows(&self) -> Vec<PreviewRowSnapshot> {
-        model::preview_rows(&self.state.finish(), &self.state.metadata)
+        model::preview_rows(&self.current_song(), &self.state.metadata)
     }
 
     /// Renders the current decisions as songs-package LaTeX.
     pub fn export_tex(&self, standalone: bool) -> Result<String, SessionError> {
-        render(&self.state.finish(), standalone)
+        render(&self.current_song(), standalone)
             .map_err(|error| SessionError::Render(error.to_string()))
     }
 
@@ -52,8 +75,9 @@ impl Session {
     /// handed back to `composeBook` verbatim; no LaTeX is assembled in
     /// JavaScript.
     pub fn book_parts(&self) -> Result<BookPartSnapshot, SessionError> {
-        let body = self.export_tex(false)?;
-        let chords = book::distinct_chords(&self.state.finish());
+        let song = self.current_song();
+        let body = render(&song, false).map_err(|error| SessionError::Render(error.to_string()))?;
+        let chords = book::distinct_chords(&song);
         Ok(BookPartSnapshot { body, chords })
     }
 
@@ -331,6 +355,55 @@ mod tests {
             session.insert_char(""),
             Err(SessionError::InvalidChar(String::new()))
         );
+    }
+
+    #[test]
+    fn transpose_accumulates_deltas_and_every_view_follows() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello\nD  G  2x\n";
+        let mut session = Session::new(raw).unwrap();
+
+        session.transpose(2).unwrap();
+        assert_eq!(session.snapshot().transpose, 2);
+        let tex = session.export_tex(false).unwrap();
+        assert!(tex.contains("\\[Bm]Hello"), "{tex}");
+        assert!(tex.contains("\\[E] \\[A]"), "{tex}");
+        assert!(session
+            .preview_rows()
+            .iter()
+            .any(|row| row.text.contains("[Bm]Hello")));
+
+        // +2 then −1 nets +1: the chord names shift again from the original.
+        session.transpose(-1).unwrap();
+        assert_eq!(session.snapshot().transpose, 1);
+        let tex = session.export_tex(false).unwrap();
+        assert!(tex.contains("\\[A#m]Hello"), "{tex}");
+        assert!(tex.contains("\\[D#] \\[G#]"), "{tex}");
+        assert!(session.book_parts().unwrap().chords == ["A#m", "D#", "G#"]);
+
+        // Transposing back to zero restores the byte-exact original.
+        session.transpose(-1).unwrap();
+        assert_eq!(session.snapshot().transpose, 0);
+        let plain = Session::new(raw).unwrap();
+        assert_eq!(
+            session.export_tex(false).unwrap(),
+            plain.export_tex(false).unwrap()
+        );
+        assert_eq!(session.preview_rows(), plain.preview_rows());
+    }
+
+    #[test]
+    fn transpose_survives_triage_edits_and_undo() {
+        let mut session = session();
+        session.handle_action("confirm").unwrap();
+        session.handle_action("discard").unwrap(); // drop "mystery line"
+        session.transpose(2).unwrap();
+        let tex = session.export_tex(false).unwrap();
+        assert!(tex.contains("\\[Bm]Hello"), "{tex}");
+        assert!(!tex.contains("mystery line"), "{tex}");
+
+        session.handle_action("undo").unwrap();
+        assert_eq!(session.snapshot().transpose, 2);
+        assert!(session.export_tex(false).unwrap().contains("mystery line"));
     }
 
     #[test]

@@ -113,6 +113,12 @@
     <section id="preview-screen" class="screen" aria-labelledby="preview-heading" hidden>
       <h2 id="preview-heading">Structure preview</h2>
       <div id="preview-content" tabindex="0" aria-label="Song structure preview, scrollable"></div>
+      <div class="actions" role="group" aria-label="Transposition">
+        <button type="button" id="transpose-down">Transpose −1</button>
+        <button type="button" id="transpose-up">Transpose +1</button>
+        <button type="button" id="transpose-reset">Reset</button>
+        <span id="transpose-label" class="hint" hidden></span>
+      </div>
       <div class="actions">
         <button type="button" id="preview-back">Back to triage</button>
         <label class="checkbox-label">

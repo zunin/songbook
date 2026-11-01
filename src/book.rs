@@ -3,6 +3,7 @@ use songbook_core::audit::{apply_noninteractive_defaults, audit_summary_line};
 use songbook_core::book::{render_book, BookManifest};
 use songbook_core::parser::classify::parse;
 use songbook_core::parser::song::Song;
+use songbook_core::transpose::transpose_song;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -17,8 +18,14 @@ pub struct BookSummary {
 /// fatal, since they describe the book itself. The title index is always
 /// included; `chord_index` opts into the chord index. Book mode is inherently
 /// non-interactive: each included song gets a one-line audit summary, like
-/// batch mode.
-pub fn run(manifest_path: &Path, out: Option<&Path>, chord_index: bool) -> Result<BookSummary> {
+/// batch mode. `semitones` transposes every included song (negative = down;
+/// 0 leaves songs untouched).
+pub fn run(
+    manifest_path: &Path,
+    out: Option<&Path>,
+    chord_index: bool,
+    semitones: i32,
+) -> Result<BookSummary> {
     let manifest = BookManifest::load(manifest_path)?;
     let out_path = out
         .map(Path::to_path_buf)
@@ -28,7 +35,7 @@ pub fn run(manifest_path: &Path, out: Option<&Path>, chord_index: bool) -> Resul
     let mut included = 0;
     let mut skipped = 0;
     for entry in &manifest.songs {
-        match convert_song(&entry.path) {
+        match convert_song(&entry.path, semitones) {
             Ok((song, summary)) => {
                 println!("Included {} — {summary}", entry.path.display());
                 songs.push(song);
@@ -53,8 +60,8 @@ pub fn run(manifest_path: &Path, out: Option<&Path>, chord_index: bool) -> Resul
 }
 
 /// Reads, parses, and audits one song, applying the non-interactive defaults
-/// so the book matches `--yes`/batch output.
-fn convert_song(path: &Path) -> Result<(Song, String)> {
+/// so the book matches `--yes`/batch output, then transposing it.
+fn convert_song(path: &Path, semitones: i32) -> Result<(Song, String)> {
     let raw =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     if raw.trim().is_empty() {
@@ -67,6 +74,7 @@ fn convert_song(path: &Path) -> Result<(Song, String)> {
     let summary = audit_summary_line(&song, &raw);
     let mut song = song;
     apply_noninteractive_defaults(&mut song);
+    transpose_song(&mut song, semitones);
     Ok((song, summary))
 }
 
@@ -109,7 +117,7 @@ mod tests {
         fs::write(dir.join("two.crd"), "Song: Second\n[Chorus]\n[F]Hey\n").unwrap();
         let manifest = write_manifest(&dir, "one.txt\ntwo.crd\n");
 
-        let summary = run(&manifest, None, false).unwrap();
+        let summary = run(&manifest, None, false, 0).unwrap();
         assert_eq!(summary.included, 2);
         assert_eq!(summary.skipped, 0);
 
@@ -132,7 +140,7 @@ mod tests {
         fs::write(dir.join("noise.txt"), "Tabbed by: x\n").unwrap();
         let manifest = write_manifest(&dir, "good.txt\nempty.txt\nnoise.txt\n");
 
-        let summary = run(&manifest, None, false).unwrap();
+        let summary = run(&manifest, None, false, 0).unwrap();
         assert_eq!(summary.included, 1);
         assert_eq!(summary.skipped, 2);
 
@@ -148,7 +156,7 @@ mod tests {
         fs::write(dir.join("empty.txt"), "").unwrap();
         let manifest = write_manifest(&dir, "empty.txt\n");
 
-        let error = run(&manifest, None, false).unwrap_err();
+        let error = run(&manifest, None, false, 0).unwrap_err();
         assert!(format!("{error:#}").contains("all 1 manifest songs were skipped"));
 
         assert!(!dir.join("album.tex").exists());
@@ -162,7 +170,7 @@ mod tests {
         let manifest = write_manifest(&dir, "one.txt\n");
         let out = dir.join("elsewhere.tex");
 
-        run(&manifest, Some(&out), false).unwrap();
+        run(&manifest, Some(&out), false, 0).unwrap();
         assert!(out.exists());
         assert!(!dir.join("album.tex").exists());
 
@@ -175,11 +183,30 @@ mod tests {
         fs::write(dir.join("one.txt"), "[Verse]\n[Am]Hello there\n").unwrap();
         let manifest = write_manifest(&dir, "one.txt\n");
 
-        run(&manifest, None, true).unwrap();
+        run(&manifest, None, true, 0).unwrap();
         let tex = fs::read_to_string(dir.join("album.tex")).unwrap();
         assert!(tex.contains("\\newindex{chordidx}{chordidx}"), "{tex}");
         assert!(tex.contains("\\indexentry[chordidx]{Am}%"), "{tex}");
         assert!(tex.contains("\\showindex{Index of Chords}{chordidx}"));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn book_transposes_every_included_song_and_its_chord_index() {
+        let dir = tempdir("booktranspose");
+        fs::write(dir.join("one.txt"), "[Verse]\n[Am]Hello there\n").unwrap();
+        fs::write(dir.join("two.crd"), "Song: Second\n[Chorus]\n[F]Hey\n").unwrap();
+        let manifest = write_manifest(&dir, "one.txt\ntwo.crd\n");
+
+        run(&manifest, None, true, 2).unwrap();
+        let tex = fs::read_to_string(dir.join("album.tex")).unwrap();
+        assert!(tex.contains("\\[Bm]Hello there"), "{tex}");
+        assert!(tex.contains("\\[G]Hey"), "{tex}");
+        assert!(!tex.contains("\\[Am]"), "{tex}");
+        // The chord index is derived from the transposed song.
+        assert!(tex.contains("\\indexentry[chordidx]{Bm}%"), "{tex}");
+        assert!(tex.contains("\\indexentry[chordidx]{G}%"), "{tex}");
 
         fs::remove_dir_all(&dir).unwrap();
     }

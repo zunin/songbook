@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use songbook_core::audit::{apply_noninteractive_defaults, audit_summary_line};
 use songbook_core::latex::render::render;
 use songbook_core::parser::classify::parse;
+use songbook_core::transpose::transpose_song;
 use std::path::{Path, PathBuf};
 
 pub struct BatchSummary {
@@ -14,12 +15,14 @@ pub struct BatchSummary {
 /// errors are reported to stderr and skipped, never fatal; the caller prints
 /// the summary and decides the exit status. Batch mode is inherently
 /// non-interactive: each converted file gets a one-line audit summary, like
-/// `--yes` (which prints the full report).
+/// `--yes` (which prints the full report). `semitones` transposes every
+/// converted song (negative = down; 0 leaves songs untouched).
 pub fn run(
     input: &Path,
     out_dir: Option<&Path>,
     recursive: bool,
     standalone: bool,
+    semitones: i32,
 ) -> Result<BatchSummary> {
     let files = discover(input, recursive)?;
     if files.is_empty() {
@@ -46,7 +49,7 @@ pub fn run(
             skipped += 1;
             continue;
         };
-        match convert_file(file, &out_path, standalone) {
+        match convert_file(file, &out_path, standalone, semitones) {
             Ok(summary) => {
                 println!("Wrote {} — {summary}", out_path.display());
                 converted += 1;
@@ -62,8 +65,9 @@ pub fn run(
 }
 
 /// Reads, parses, renders, and writes one file, returning its one-line audit
-/// summary.
-fn convert_file(file: &Path, out_path: &Path, standalone: bool) -> Result<String> {
+/// summary. The audit describes the parse guesses; the song is transposed
+/// (after the non-interactive defaults) before rendering.
+fn convert_file(file: &Path, out_path: &Path, standalone: bool, semitones: i32) -> Result<String> {
     let raw =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
     if raw.trim().is_empty() {
@@ -76,6 +80,7 @@ fn convert_file(file: &Path, out_path: &Path, standalone: bool) -> Result<String
     let summary = audit_summary_line(&song, &raw);
     let mut song = song;
     apply_noninteractive_defaults(&mut song);
+    transpose_song(&mut song, semitones);
     let tex = render(&song, standalone).with_context(|| format!("rendering {}", file.display()))?;
     std::fs::write(out_path, tex).with_context(|| format!("writing {}", out_path.display()))?;
     Ok(summary)
@@ -185,7 +190,7 @@ mod tests {
         fs::write(dir.join("noise.txt"), "Tabbed by: x\n").unwrap();
         fs::write(dir.join("good.tex"), "stale content").unwrap();
 
-        let summary = run(&dir, None, false, false).unwrap();
+        let summary = run(&dir, None, false, false, 0).unwrap();
         assert_eq!(summary.converted, 1);
         assert_eq!(summary.skipped, 2);
 
@@ -204,7 +209,7 @@ mod tests {
         fs::write(dir.join("good.txt"), GOOD).unwrap();
         let out = dir.join("out");
 
-        let summary = run(&dir, Some(&out), false, true).unwrap();
+        let summary = run(&dir, Some(&out), false, true, 0).unwrap();
         assert_eq!(summary.converted, 1);
         assert_eq!(summary.skipped, 0);
 
@@ -217,7 +222,7 @@ mod tests {
     #[test]
     fn empty_directory_is_a_clean_no_op() {
         let dir = tempdir("emptydir");
-        let summary = run(&dir, None, false, false).unwrap();
+        let summary = run(&dir, None, false, false, 0).unwrap();
         assert_eq!(summary.converted, 0);
         assert_eq!(summary.skipped, 0);
         fs::remove_dir_all(&dir).unwrap();
@@ -230,11 +235,45 @@ mod tests {
         fs::write(dir.join("top.txt"), GOOD).unwrap();
         fs::write(dir.join("sub").join("nested.txt"), GOOD).unwrap();
 
-        let summary = run(&dir, None, true, false).unwrap();
+        let summary = run(&dir, None, true, false, 0).unwrap();
         assert_eq!(summary.converted, 2);
         assert!(dir.join("top.tex").exists());
         assert!(dir.join("sub").join("nested.tex").exists());
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn batch_transposes_every_converted_file() {
+        let dir = tempdir("transpose");
+        fs::write(dir.join("up.txt"), GOOD).unwrap();
+        fs::write(
+            dir.join("down.txt"),
+            "Song: Down\n[Chorus]\n[Bm]Hey [A]ho\n",
+        )
+        .unwrap();
+
+        run(&dir, None, false, false, 2).unwrap();
+        let up = fs::read_to_string(dir.join("up.tex")).unwrap();
+        assert!(up.contains("\\[Bm]Hello there"), "{up}");
+        assert!(!up.contains("\\[Am]"), "{up}");
+        let down = fs::read_to_string(dir.join("down.tex")).unwrap();
+        assert!(down.contains("\\[C#m]Hey \\[B]ho"), "{down}");
+
+        // Zero semitones leaves the output byte-identical to the default.
+        let zero = tempdir("transpose-zero");
+        fs::write(zero.join("same.txt"), GOOD).unwrap();
+        run(&zero, None, false, false, 0).unwrap();
+        let plain = tempdir("transpose-plain");
+        fs::write(plain.join("same.txt"), GOOD).unwrap();
+        run(&plain, None, false, false, 0).unwrap();
+        assert_eq!(
+            fs::read_to_string(zero.join("same.tex")).unwrap(),
+            fs::read_to_string(plain.join("same.tex")).unwrap()
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&zero).unwrap();
+        fs::remove_dir_all(&plain).unwrap();
     }
 }

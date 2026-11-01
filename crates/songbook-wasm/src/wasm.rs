@@ -58,6 +58,16 @@ impl SongbookSession {
         self.snapshot()
     }
 
+    /// Transposes the current triaged song by `delta` semitones (negative =
+    /// down; delta-based, so +2 then −1 nets +1) and returns the updated
+    /// snapshot. Preview rows, `.tex`/PDF exports, and book parts follow the
+    /// transposed song.
+    #[wasm_bindgen(js_name = transpose)]
+    pub fn transpose(&mut self, delta: i32) -> Result<JsValue, JsValue> {
+        self.inner.transpose(delta).map_err(js_error)?;
+        self.snapshot()
+    }
+
     #[wasm_bindgen(js_name = handleKey)]
     pub fn handle_key(&mut self, key: &str) -> Result<JsValue, JsValue> {
         self.inner.handle_key(key).map_err(js_error)?;

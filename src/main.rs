@@ -4,7 +4,7 @@ mod tui;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser as ClapParser;
-use songbook_core::{audit, latex, parser};
+use songbook_core::{audit, latex, parser, transpose};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
@@ -47,6 +47,12 @@ struct Cli {
     /// guess (no-op for --book, which is always non-interactive)
     #[arg(short = 'y', long)]
     yes: bool,
+
+    /// Shift every chord by this many semitones (negative = down, e.g.
+    /// --transpose=-2); names are respelled from a fixed sharp ladder upward
+    /// and flat ladder downward (C+1=C#, Bb-1=A)
+    #[arg(long, default_value_t = 0, allow_hyphen_values = true)]
+    transpose: i32,
 }
 
 fn main() -> Result<()> {
@@ -59,7 +65,7 @@ fn main() -> Result<()> {
         if cli.recursive {
             bail!("--recursive has no effect with --book (a book lists its songs explicitly)");
         }
-        let summary = book::run(manifest, cli.out.as_deref(), cli.chord_index)?;
+        let summary = book::run(manifest, cli.out.as_deref(), cli.chord_index, cli.transpose)?;
         println!(
             "Included {}, skipped {}.",
             summary.included, summary.skipped
@@ -75,7 +81,13 @@ fn main() -> Result<()> {
     };
 
     if input.is_dir() {
-        let summary = batch::run(input, cli.out.as_deref(), cli.recursive, cli.standalone)?;
+        let summary = batch::run(
+            input,
+            cli.out.as_deref(),
+            cli.recursive,
+            cli.standalone,
+            cli.transpose,
+        )?;
         println!(
             "Converted {}, skipped {}.",
             summary.converted, summary.skipped
@@ -124,6 +136,10 @@ fn run_single(input: &Path, cli: &Cli) -> Result<()> {
         audit::apply_noninteractive_defaults(&mut song);
         print!("{report}");
     }
+
+    // The audit above describes the parse guesses, which transposition does
+    // not touch; the transposed song is what gets rendered below.
+    transpose::transpose_song(&mut song, cli.transpose);
 
     let tex = latex::render::render(&song, cli.standalone)
         .with_context(|| format!("rendering {}", input.display()))?;

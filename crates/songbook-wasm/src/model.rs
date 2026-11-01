@@ -53,6 +53,8 @@ pub struct SessionSnapshot {
     pub message: Option<String>,
     pub metadata_field: usize,
     pub preview_scroll: usize,
+    /// Net transposition offset in semitones applied to the triaged song.
+    pub transpose: i32,
     pub metadata: MetadataSnapshot,
     pub lines: Vec<LineSnapshot>,
 }
@@ -74,7 +76,7 @@ pub struct BookPartSnapshot {
     pub chords: Vec<String>,
 }
 
-pub(crate) fn snapshot(state: &TriageState) -> SessionSnapshot {
+pub(crate) fn snapshot(state: &TriageState, transpose: i32) -> SessionSnapshot {
     SessionSnapshot {
         phase: phase_name(state.phase).to_string(),
         position: state.position,
@@ -87,6 +89,7 @@ pub(crate) fn snapshot(state: &TriageState) -> SessionSnapshot {
         message: state.message.clone(),
         metadata_field: state.metadata_field,
         preview_scroll: state.preview_scroll,
+        transpose,
         metadata: metadata_snapshot(&state.metadata),
         lines: state
             .lines
