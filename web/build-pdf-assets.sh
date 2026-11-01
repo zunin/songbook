@@ -230,4 +230,9 @@ if [[ "${SMOKE_TEST:-1}" == "1" ]]; then
   node "$SRC/pdf/test/smoke-node.mjs" "$ASSETS" "$SRC/pdf/test/fixtures"
 fi
 
+# Scratch removal: $WORK is unpacked scratch (upstream trees, docstrip job),
+# not an output — never let it land inside the served $ASSETS tree. The
+# upstream download cache stays where it belongs: web/pdf/.cache/.
+rm -rf "$WORK"
+
 say "build complete: $ASSETS"
