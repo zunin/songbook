@@ -5,16 +5,16 @@ RUN curl -Ls "https://github.com/tectonic-typesetting/tectonic/releases/download
     | tar xz -C /usr/local/bin tectonic \
     && tectonic --version
 
-# NOTE: wasm-opt (binaryen) is deliberately NOT installed here. Tested on
-# 2026-11-01 against this project's rustc 1.88 / wasm-bindgen 0.2.100 output:
-# - Debian bookworm's binaryen 108 rejects the module outright (bulk memory /
-#   sign-ext), and its flag-enabled output was also rejected by V8;
-# - pinned upstream binaryen 133 (--all -Oz) validated and optimized the
-#   module (1,554,257 -> 1,414,919 B) but the RESULT was rejected by V8 at
-#   instantiation ("unknown import kind 0x7f") under node 26 — while the
-#   unoptimized module instantiates fine everywhere.
-# Do not re-enable without a newer binaryen AND the full smoke gate (both
-# fixtures must pass byte-exact on the optimized wasm).
+# wasm-opt (binaryen 133, pinned + sha256) shrinks songbook_wasm_bg.wasm.
+# Bookworm's binaryen 108 was broken here (mangled rustc 1.88 wasm); 133
+# needs --enable-bulk-memory explicitly, and -all must NOT be used (its
+# re-encoding is rejected by V8: "unknown import kind").
+ARG BINARYEN_VERSION=133
+RUN curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" -o /tmp/binaryen.tar.gz \
+    && echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  /tmp/binaryen.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/binaryen.tar.gz -C /usr/local/bin --strip-components=2 "binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt" \
+    && rm /tmp/binaryen.tar.gz \
+    && wasm-opt --version
 
 # web/build.sh requires the wasm32 rust target and a wasm-bindgen-cli whose
 # version exactly matches the `wasm-bindgen = "=0.2.100"` pin in

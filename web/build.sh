@@ -61,7 +61,10 @@ printf '{"type": "module"}\n' > "$out_dir/package.json"
 
 if command -v wasm-opt >/dev/null 2>&1; then
   echo "==> wasm-opt -Oz"
-  wasm-opt -Oz "$out_dir/songbook_wasm_bg.wasm" -o "$out_dir/songbook_wasm_bg.wasm"
+  # binaryen 133 validates rustc 1.88's output only with bulk memory enabled
+  # explicitly; -all is forbidden (its re-encoding is rejected by V8). The
+  # full smoke gate must pass on the optimized wasm.
+  wasm-opt --enable-bulk-memory -Oz "$out_dir/songbook_wasm_bg.wasm" -o "$out_dir/songbook_wasm_bg.wasm"
 else
   echo "==> wasm-opt not available; skipping size optimization"
 fi
