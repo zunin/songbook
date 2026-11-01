@@ -159,6 +159,25 @@ input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   font-size: 0.85rem;
 }
 
+/* Keyboard-hint chips (discoverability): the visible <kbd> on a button is
+   decorative — aria-hidden in the markup — while the spoken form is the
+   button's .visually-hidden "(shortcut …)" suffix plus its
+   aria-keyshortcuts attribute. Variables keep dark mode correct. */
+kbd {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 0.3em;
+  margin-left: 0.35em;
+}
+button.primary kbd {
+  color: var(--accent-contrast);
+  border-color: var(--accent-contrast);
+  opacity: 0.85;
+}
+
 /* Paste input (ADR0020): one shared style for the load-screen textarea and
    the "Add a pasted song" boxes on the book form and book export screens. */
 .paste-box {

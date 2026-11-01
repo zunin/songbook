@@ -108,25 +108,28 @@
       <div id="current-controls">
         <h3>Actions for the current line</h3>
         <div class="actions" role="group" aria-label="Verdict for the current line">
-          <button type="button" data-action="keep" class="primary">Keep</button>
-          <button type="button" data-action="discard">Discard</button>
-          <button type="button" data-action="lyric">Lyric</button>
-          <button type="button" data-action="chord_only">Chord only</button>
-          <button type="button" data-action="section_header">Header</button>
-          <button type="button" data-action="noise">Noise</button>
+          <button type="button" data-action="keep" class="primary" aria-keyshortcuts="Enter">Keep <kbd aria-hidden="true">⏎</kbd><span class="visually-hidden"> (shortcut Enter)</span></button>
+          <button type="button" data-action="discard" aria-keyshortcuts="d">Discard <kbd aria-hidden="true">d</kbd><span class="visually-hidden"> (shortcut d)</span></button>
+          <button type="button" data-action="lyric" aria-keyshortcuts="l">Lyric <kbd aria-hidden="true">l</kbd><span class="visually-hidden"> (shortcut l)</span></button>
+          <button type="button" data-action="chord_only" aria-keyshortcuts="c">Chord only <kbd aria-hidden="true">c</kbd><span class="visually-hidden"> (shortcut c)</span></button>
+          <button type="button" data-action="section_header" aria-keyshortcuts="h">Header <kbd aria-hidden="true">h</kbd><span class="visually-hidden"> (shortcut h)</span></button>
+          <button type="button" data-action="noise" aria-keyshortcuts="n">Noise <kbd aria-hidden="true">n</kbd><span class="visually-hidden"> (shortcut n)</span></button>
         </div>
         <div class="actions">
-          <button type="button" data-action="edit">Edit line</button>
-          <button type="button" data-action="undo">Undo</button>
-          <button type="button" data-action="next_flag">Next flag</button>
-          <button type="button" data-action="prev_flag">Previous flag</button>
+          <button type="button" data-action="edit" aria-keyshortcuts="e">Edit line <kbd aria-hidden="true">e</kbd><span class="visually-hidden"> (shortcut e)</span></button>
+          <button type="button" data-action="undo" aria-keyshortcuts="u Control+Z Meta+Z">Undo <kbd aria-hidden="true">u</kbd><span class="visually-hidden"> (shortcut u)</span></button>
+          <button type="button" data-action="next_flag" aria-keyshortcuts="f">Next flag <kbd aria-hidden="true">f</kbd><span class="visually-hidden"> (shortcut f)</span></button>
+          <button type="button" data-action="prev_flag" aria-keyshortcuts="Shift+F">Previous flag <kbd aria-hidden="true">F</kbd><span class="visually-hidden"> (shortcut Shift+F)</span></button>
         </div>
         <div class="actions">
-          <button type="button" data-action="auto_accept">Accept remaining pending</button>
-          <button type="button" data-action="preview">Preview</button>
+          <button type="button" data-action="auto_accept" aria-keyshortcuts="a">Accept remaining pending <kbd aria-hidden="true">a</kbd><span class="visually-hidden"> (shortcut a)</span></button>
+          <button type="button" data-action="preview" aria-keyshortcuts="s p">Preview <kbd aria-hidden="true">s</kbd><span class="visually-hidden"> (shortcut s)</span></button>
           <button type="button" id="triage-back" hidden>Back</button>
           <button type="button" id="start-over">Start over</button>
         </div>
+        <p class="hint">j/k move · Enter keep · d discard · l lyric · c chord ·
+          h header · n noise · e edit · u undo · f/F flag · a auto · s preview ·
+          PgUp/PgDn page</p>
       </div>
     </section>
 
@@ -134,13 +137,13 @@
       <h2 id="preview-heading">Structure preview</h2>
       <div id="preview-content" tabindex="0" aria-label="Song structure preview, scrollable"></div>
       <div class="actions" role="group" aria-label="Transposition">
-        <button type="button" id="transpose-down">Transpose −1</button>
-        <button type="button" id="transpose-up">Transpose +1</button>
-        <button type="button" id="transpose-reset">Reset</button>
+        <button type="button" id="transpose-down" aria-keyshortcuts="-">Transpose −1 <kbd aria-hidden="true">-</kbd><span class="visually-hidden"> (shortcut minus)</span></button>
+        <button type="button" id="transpose-up" aria-keyshortcuts="+ =">Transpose +1 <kbd aria-hidden="true">+</kbd><span class="visually-hidden"> (shortcut plus)</span></button>
+        <button type="button" id="transpose-reset" aria-keyshortcuts="0">Reset <kbd aria-hidden="true">0</kbd><span class="visually-hidden"> (shortcut 0)</span></button>
         <span id="transpose-label" class="hint" hidden></span>
       </div>
       <div class="actions">
-        <button type="button" id="preview-back">Back to triage</button>
+        <button type="button" id="preview-back" aria-keyshortcuts="Escape">Back to triage <kbd aria-hidden="true">Esc</kbd><span class="visually-hidden"> (shortcut Escape)</span></button>
         <label class="checkbox-label">
           <input type="checkbox" id="standalone-toggle">
           Standalone document (full LaTeX file)
@@ -149,6 +152,8 @@
         <button type="button" id="download-pdf">Download PDF</button>
         <button type="button" id="book-next" class="primary" hidden>Next song</button>
       </div>
+      <p class="hint">j/k scroll · PgUp/PgDn page · + / - transpose · 0 reset ·
+        Esc back</p>
       <p id="pdf-status" role="status" aria-live="polite" aria-atomic="true"></p>
     </section>
 

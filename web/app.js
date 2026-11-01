@@ -419,6 +419,15 @@ function applyTranspose(delta) {
   announceTranspose(delta);
 }
 
+// Back to the song's original key, shared by the Reset button and the `0`
+// key (preview phase). Judged on the session offset the snapshot reports —
+// the same surface the label and the announcements read.
+function resetTranspose() {
+  const offset = state.snapshot?.transpose ?? 0;
+  if (offset !== 0) applyTranspose(-offset);
+  else announce("Transposition is already at the original key.");
+}
+
 function announceTranspose(delta) {
   const offset = state.snapshot?.transpose ?? 0;
   if (offset === 0) {
@@ -1027,13 +1036,25 @@ function setupGlobalKeys() {
     }
     const key = event.key;
     let handled = true;
+    // Transposition keys speak through applyTranspose's own announcement;
+    // the shared tail below must not overwrite it with a stale
+    // snapshot.message.
+    let announced = false;
     if (key === "ArrowDown" || key === "j") applyAction("next");
     else if (key === "ArrowUp" || key === "k") applyAction("prev");
     else if (key === "PageDown") applyAction("page_down");
     else if (key === "PageUp") applyAction("page_up");
     else if (key === "f") applyAction("next_flag");
     else if (key === "F") applyAction("prev_flag");
-    else if (key === "Enter") applyAction("keep");
+    // Triage only. Core maps Key::Confirm to Phase::Done in the preview
+    // phase (triage.rs handle_preview), a phase the web render() ignores, so
+    // dispatching "keep" there would brick the session — and the
+    // preventDefault below would also swallow a focused preview button's
+    // native Enter click. On the preview screen Enter stays the browser's.
+    else if (key === "Enter") {
+      if (state.snapshot?.phase === "triage") applyAction("keep");
+      else handled = false;
+    }
     else if (key === "d") applyAction("discard");
     else if (key === "l") applyAction("lyric");
     else if (key === "c") applyAction("chord_only");
@@ -1043,13 +1064,36 @@ function setupGlobalKeys() {
     else if (key === "u") applyAction("undo");
     else if (key === "a") applyAction("auto_accept");
     else if (key === "p" || key === "s") applyAction("preview");
-    else if (key === "Escape") applyAction("escape");
+    else if (key === "+" || key === "=" || key === "-" || key === "0") {
+      // Preview phase only, mirroring the Transpose buttons. Deliberately
+      // NOT handleAction("transpose_up"/"transpose_down"/"transpose_reset")
+      // (the action names the TUI surface accepts): in the wasm Session
+      // those drive the separate core TriageState offset, while the label,
+      // the announcements and the buttons all read the session-level offset
+      // that Session::transpose keeps — driving both would let them
+      // accumulate independently and double-apply.
+      if (state.snapshot?.phase === "preview") {
+        if (key === "0") resetTranspose();
+        else applyTranspose(key === "-" ? -1 : 1);
+        announced = true;
+      } else {
+        handled = false;
+      }
+    }
+    // Preview only. Core maps Key::Escape to back-to-triage there (the
+    // preview-back button), but in the triage phase it maps to Phase::Quit
+    // (triage.rs handle_triage), which the web render() ignores — the
+    // session would brick. On the triage screen Escape is inert.
+    else if (key === "Escape") {
+      if (state.snapshot?.phase === "preview") applyAction("escape");
+      else handled = false;
+    }
     else handled = false;
 
     if (handled) {
       event.preventDefault();
       const snapshot = state.snapshot;
-      if (snapshot?.message) announce(snapshot.message);
+      if (!announced && snapshot?.message) announce(snapshot.message);
     }
   });
 }
@@ -1103,11 +1147,7 @@ function setupControls() {
       : "Package song format selected."));
   els["transpose-down"].addEventListener("click", () => applyTranspose(-1));
   els["transpose-up"].addEventListener("click", () => applyTranspose(1));
-  els["transpose-reset"].addEventListener("click", () => {
-    const offset = state.snapshot?.transpose ?? 0;
-    if (offset !== 0) applyTranspose(-offset);
-    else announce("Transposition is already at the original key.");
-  });
+  els["transpose-reset"].addEventListener("click", resetTranspose);
 
   els["book-form-continue"].addEventListener("click", startBookTriage);
   els["book-form-reset"].addEventListener("click", startOver);
