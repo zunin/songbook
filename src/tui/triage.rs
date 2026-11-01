@@ -1,4 +1,3 @@
-use super::state::{line_kind_label, Phase, TriageState, Verdict};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -6,6 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+use songbook_core::triage::{line_kind_label, Phase, TriageState, Verdict};
 
 pub fn draw(frame: &mut Frame, state: &TriageState) {
     let area = frame.area();
@@ -231,9 +231,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &TriageState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::classify::parse;
-    use crate::tui::state::{Key, TriageState};
     use ratatui::{backend::TestBackend, Terminal};
+    use songbook_core::parser::classify::parse;
+    use songbook_core::triage::{Key, TriageState};
 
     fn rendered(state: &TriageState) -> String {
         rendered_at(state, 120, 40)

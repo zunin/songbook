@@ -1,11 +1,9 @@
-mod audit;
 mod batch;
-mod latex;
-mod parser;
 mod tui;
 
 use anyhow::{Context, Result};
 use clap::Parser as ClapParser;
+use songbook_core::{audit, latex, parser};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 

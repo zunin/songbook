@@ -3,7 +3,7 @@ use crate::parser::classify::{
     classify_line, metadata_provenance, preamble_len, section_kind_from_header,
 };
 use crate::parser::song::{LineKind, Section, SectionKind, Song};
-use crate::tui::preview;
+use crate::preview;
 
 const METADATA_FIELD_COUNT: usize = 5;
 const PREVIEW_PAGE: usize = 10;
@@ -683,8 +683,8 @@ mod tests {
     #[test]
     fn unedited_review_matches_noninteractive_defaults() {
         let fixtures = [
-            include_str!("../../examples/let-it-be.txt"),
-            include_str!("../../examples/synthetic.txt"),
+            include_str!("../../../examples/let-it-be.txt"),
+            include_str!("../../../examples/synthetic.txt"),
             "Title here\nArtist here\n\nStandard (E A D G B E)\n[Intro]\nAm  F  C  G\n2x\n[Verse 1]\n[Am]Hello there\nmystery line\n[F]Bye\ne|---3---|\nWas this info helpful? Yes No\n[Chorus]\n[C]La la\n[Outro]\n",
             "Song: Spaced\nArtist: Band\n[Verse]\n  [Am]Hello there  \n    \n  Dm    G    \n  spaced lyric  \nWas this info helpful? Yes No\n[F]Goodbye\n",
         ];

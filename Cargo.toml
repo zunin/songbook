@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/songbook-core"]
+default-members = [".", "crates/songbook-core"]
+
 [package]
 name = "songbook"
 version = "0.1.0"
@@ -9,7 +13,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 ratatui = "0.29"
-regex = "1"
+songbook-core = { path = "crates/songbook-core" }
 
 [profile.release]
 lto = true

@@ -1,15 +1,14 @@
 pub mod preview;
-pub mod state;
 pub mod triage;
 
-use crate::parser::song::Song;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use state::{Key, Phase, TriageState};
+use songbook_core::parser::song::Song;
+use songbook_core::triage::{Key, Phase, TriageState};
 use std::io::{IsTerminal, Stdout};
 use std::path::Path;
 
@@ -154,8 +153,8 @@ fn map_key(key: KeyEvent, state: &TriageState) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::latex::render::render;
-    use crate::parser::classify::parse;
+    use songbook_core::latex::render::render;
+    use songbook_core::parser::classify::parse;
 
     #[test]
     fn non_interactive_falls_back_to_heuristics() {

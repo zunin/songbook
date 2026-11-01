@@ -1,7 +1,7 @@
-use crate::audit::{apply_noninteractive_defaults, audit_summary_line};
-use crate::latex::render::render;
-use crate::parser::classify::parse;
 use anyhow::{bail, Context, Result};
+use songbook_core::audit::{apply_noninteractive_defaults, audit_summary_line};
+use songbook_core::latex::render::render;
+use songbook_core::parser::classify::parse;
 use std::path::{Path, PathBuf};
 
 pub struct BatchSummary {
