@@ -60,8 +60,11 @@ else
   echo "==> wasm-opt not available; skipping size optimization"
 fi
 
-echo "==> copy static assets -> $out_dir"
-cp web/index.html web/styles.css web/app.js "$out_dir/"
+echo "==> copy static and license assets -> $out_dir"
+cp web/index.html web/styles.css web/app.js web/licenses.html "$out_dir/"
+cp LICENSE "$out_dir/"
+cp -R licenses "$out_dir/licenses"
+./web/source-bundle.sh
 
 echo "==> done: serve the folder, e.g.  python3 -m http.server -d web/dist 8080"
 ls -l "$out_dir"

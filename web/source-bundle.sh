@@ -21,9 +21,8 @@ if ! git check-ignore -q "$out_dir"; then
   exit 1
 fi
 
-short_sha="$(git rev-parse --short=12 HEAD)"
-bundle_name="songbook-${version}-g${short_sha}"
-archive="${out_dir}/${bundle_name}-src.tar.gz"
+bundle_name="songbook-${version}"
+archive="${out_dir}/songbook-source-${version}.tar.gz"
 
 mkdir -p "$out_dir"
 git archive --format=tar.gz --prefix="${bundle_name}/" --output="$archive" HEAD
