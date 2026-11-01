@@ -62,7 +62,7 @@ fi
 
 echo "==> copy static and license assets -> $out_dir"
 cp web/index.html web/styles.css web/app.js web/licenses.html "$out_dir/"
-cp LICENSE "$out_dir/"
+cp LICENSE THIRD_PARTY_NOTICES.md "$out_dir/"
 cp -R licenses "$out_dir/licenses"
 ./web/source-bundle.sh
 
