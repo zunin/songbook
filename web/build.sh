@@ -55,7 +55,10 @@ wasm-bindgen --target web --out-dir "$out_dir" --out-name songbook_wasm "$wasm_p
 
 if command -v wasm-opt >/dev/null 2>&1; then
   echo "==> wasm-opt -Oz"
-  wasm-opt -Oz "$out_dir/songbook_wasm_bg.wasm" -o "$out_dir/songbook_wasm_bg.wasm"
+  # rustc (1.88+) emits bulk-memory and sign-ext instructions by default;
+  # older Binaryen validators reject them unless the features are enabled.
+  # -all keeps this working across toolchain versions.
+  wasm-opt -all -Oz "$out_dir/songbook_wasm_bg.wasm" -o "$out_dir/songbook_wasm_bg.wasm"
 else
   echo "==> wasm-opt not available; skipping size optimization"
 fi
