@@ -6,6 +6,11 @@
 import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, basename, resolve } from "node:path";
+// The vendored engine's imports use the WebCrypto `crypto` global (WASM
+// random_get). Node < 19 does not expose it by default; provide it from the
+// crypto core module so the smoke runs on any supported node version.
+import { webcrypto } from "node:crypto";
+if (!globalThis.crypto) globalThis.crypto = webcrypto;
 import { pathToFileURL } from "node:url";
 
 const assetsDir = resolve(process.argv[2]);
