@@ -1,0 +1,29 @@
+Song: Every Construct
+Artist: Test & Co.
+Key: D
+Capo: 2
+Tuning: D A D G A D
+Tabbed by: example
+
+[Intro]
+D  A  Bm  G  2x
+
+[Verse 1]
+[D]This verse exercises [A]inline chords
+and writes [Bm]100% of R&D $5 #1 under_score {braces} ~tilde ^caret \backslash
+Plain ambiguous lyric line
+
+[Chorus]
+[G]Same chorus body [A]over and over, with punctuation!
+[D]Let it ring
+
+[Chorus]
+[G]Same chorus body [A]over and over with punctuation
+[D]Let it ring
+
+[Bridge]
+[D]This is an unnumbered verse* context
+[G]With another line
+
+[Outro]
+[D]Goodbye [A]now

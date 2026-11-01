@@ -1,0 +1,16 @@
+[package]
+name = "songbook"
+version = "0.1.0"
+edition = "2021"
+description = "Convert ASCII tabs (chord-over-lyrics) to LaTeX songs-package format"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+ratatui = "0.29"
+regex = "1"
+
+[profile.release]
+lto = true
+strip = true

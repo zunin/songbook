@@ -1,0 +1,37 @@
+Song: Let It Be
+Artist: The Beatles
+Tabbed by: example
+Tuning: Standard
+Key: C
+Capo: none
+
+Chords used:
+   Am    F    C    G
+e|-0----1----0----3-|
+B|-1----1----1----0-|
+G|-2----2----0----0-|
+D|-2----3----2----0-|
+A|-0----3----3----2-|
+E|----------- ------3-|
+
+https://www.ultimate-guitar.com/tab/... (example noise)
+
+[Intro]
+Am  F  C  G  2x
+
+[Verse 1]
+[Am]When I find myself in [F]times of trouble,
+Mother [C]Mary comes to [G]me
+[Am]Speaking words of [F]wisdom, let it [C]be
+
+[Chorus]
+[Am]Let it [F]be, let it [C]be, let it [G]be, yeah
+[Am]There will be an [F]answer, let it [C]be
+
+Was this info helpful? Yes No
+
+# This section intentionally left messy for triage testing
+some line the classifier won't know what to do with
+
+[Outro]
+[Am]Let it [F]be, let it [C]be
