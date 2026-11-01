@@ -67,6 +67,9 @@ Alternatives rejected:
   E1 (core port of the index converter); delegated the exact wasm ferry shape
   to the implementer under the no-LaTeX-in-JS constraint; approved the
   proposed web flow. No veto.
+- At the Phase 2 click-test (2026-11-01) the board approved the shipped
+  result, in which the book Title/Author form precedes triage (the Decision's
+  flow summary listed it after triage; the shipped order stands as accepted).
 
 ## Limitations (accepted)
 

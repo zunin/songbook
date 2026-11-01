@@ -49,8 +49,9 @@ typesetting.
 
 A book is a plain-text manifest → `songbook-core::book` → one `.tex` that
 composes each song's unchanged body, plus the `songs` package's title index
-(ADR0018). In the browser, book PDFs will need the package's three-step index
-pipeline (`songidx.lua`) or a pre-seeded `.sbx` — a Phase 2 engine work item.
+(ADR0018). In the browser, book PDFs run the same three-step pipeline through
+the worker (compile → songidx port → compile), byte-exact against a native
+reference (ADR0019).
 ```
 
 ## Fitness functions
@@ -61,7 +62,8 @@ pipeline (`songidx.lua`) or a pre-seeded `.sbx` — a Phase 2 engine work item.
 - Build pins: every upstream source and the built pack are sha256-pinned;
   mismatch fails the build (ADR0017).
 - Golden book fixture: the committed `examples/demo-book.tex` is byte-exact,
-  and the PDF smoke also compiles a book fixture (ADR0018).
+  and the PDF smoke compiles a book fixture byte-exact against a native
+  three-step reference (ADR0018, ADR0019).
 
 ## Invariants
 
