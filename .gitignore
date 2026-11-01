@@ -5,3 +5,4 @@
 *.pdf
 Cargo.lock
 out/
+web/dist/

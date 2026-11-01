@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; require-trusted-types-for 'script'">
+  <meta name="description" content="Private browser-local song editor. Your song file never leaves this device.">
+  <link rel="icon" href="data:,">
+  <title>Songbook</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <header>
+    <h1>Songbook</h1>
+    <p class="privacy-note">This tool runs entirely in your browser. Your song file is
+      never uploaded, sent anywhere, or saved between visits.</p>
+  </header>
+  <main id="main">
+    <noscript>
+      <p>This application needs JavaScript and WebAssembly to run. No data is sent
+        anywhere; everything happens on this device.</p>
+    </noscript>
+
+    <section id="load-screen" class="screen" aria-labelledby="load-heading">
+      <h2 id="load-heading">Open a song file</h2>
+      <div id="drop-zone" role="button" tabindex="0"
+           aria-label="Choose or drop a .txt or .crd song file">
+        <p>Drop a <strong>.txt</strong> or <strong>.crd</strong> file here,</p>
+        <p>or</p>
+        <label class="file-label">
+          <span class="button-like">Choose a file</span>
+          <input type="file" id="file-input" accept=".txt,.crd" multiple="multiple">
+        </label>
+        <p id="file-error" role="alert" class="error"></p>
+      </div>
+    </section>
+
+    <section id="metadata-screen" class="screen" aria-labelledby="metadata-heading" hidden>
+      <h2 id="metadata-heading">Song metadata</h2>
+      <p id="metadata-hint">Fields marked “inferred” were guessed from the file.
+        Correct anything that is wrong, then continue.</p>
+      <form id="metadata-form" novalidate></form>
+      <div class="actions">
+        <button type="button" id="metadata-continue" class="primary">Continue to triage</button>
+      </div>
+      <p id="metadata-error" role="alert" class="error"></p>
+    </section>
+
+    <section id="triage-screen" class="screen" aria-labelledby="triage-heading" hidden>
+      <h2 id="triage-heading">Review each line</h2>
+      <p id="triage-status" class="status-bar"></p>
+      <p id="triage-live" class="visually-hidden" aria-live="polite"></p>
+      <div id="triage-list" role="list"></div>
+      <div id="current-controls">
+        <h3>Actions for the current line</h3>
+        <div class="actions" role="group" aria-label="Verdict for the current line">
+          <button type="button" data-action="keep" class="primary">Keep</button>
+          <button type="button" data-action="discard">Discard</button>
+          <button type="button" data-action="lyric">Lyric</button>
+          <button type="button" data-action="chord_only">Chord only</button>
+          <button type="button" data-action="section_header">Header</button>
+          <button type="button" data-action="noise">Noise</button>
+        </div>
+        <div class="actions">
+          <button type="button" data-action="edit">Edit line</button>
+          <button type="button" data-action="undo">Undo</button>
+          <button type="button" data-action="next_flag">Next flag</button>
+          <button type="button" data-action="prev_flag">Previous flag</button>
+        </div>
+        <div class="actions">
+          <button type="button" data-action="auto_accept">Accept remaining pending</button>
+          <button type="button" data-action="preview">Preview</button>
+          <button type="button" id="start-over">Start over</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="preview-screen" class="screen" aria-labelledby="preview-heading" hidden>
+      <h2 id="preview-heading">Structure preview</h2>
+      <div id="preview-content" tabindex="0" aria-label="Song structure preview, scrollable"></div>
+      <div class="actions">
+        <button type="button" id="preview-back">Back to triage</button>
+        <label class="checkbox-label">
+          <input type="checkbox" id="standalone-toggle">
+          Standalone document (full LaTeX file)
+        </label>
+        <button type="button" id="download-tex" class="primary">Download .tex</button>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <p>Songbook — private, browser-local song editor. No uploads, no tracking.</p>
+  </footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
