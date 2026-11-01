@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; require-trusted-types-for 'script'">
+  <meta name="description" content="Licenses, third-party notices, and corresponding source for Songbook.">
+  <link rel="icon" href="data:,">
+  <title>Songbook — Licenses and source</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <header>
+    <h1>Licenses and source</h1>
+    <p class="privacy-note">Songbook is free software under the GNU General
+      Public License. Third-party notices and the corresponding source for this
+      release are listed below.</p>
+  </header>
+  <main id="main">
+    <p><a href="index.html">Back to Songbook</a></p>
+
+    <section aria-labelledby="app-license">
+      <h2 id="app-license">Songbook application</h2>
+      <p><strong>Songbook 0.1.0</strong><br>
+        Copyright (C) 2026 Nikolai Øllegaard</p>
+      <p>Songbook is free software: you can redistribute it and/or modify it
+        under the terms of the GNU General Public License as published by the
+        Free Software Foundation, either version 3 of the License, or (at your
+        option) any later version.</p>
+      <p>Songbook is distributed in the hope that it will be useful, but
+        <strong>WITHOUT ANY WARRANTY</strong>; without even the implied warranty
+        of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+        General Public License for more details.</p>
+      <p>Full license text:
+        <a href="licenses/GPL-3.0.txt">GNU General Public License version 3</a>.
+        In the source tree, the project license is also available as
+        <code>LICENSE</code>, and the full manifest is
+        <code>THIRD_PARTY_NOTICES.md</code>.</p>
+      <p>Corresponding source for this release:
+        <a href="songbook-source-0.1.0.tar.gz">songbook-source-0.1.0.tar.gz</a>
+        (built to <code>web/dist/songbook-source-0.1.0.tar.gz</code>).</p>
+    </section>
+
+    <section aria-labelledby="shipped-components">
+      <h2 id="shipped-components">Components shipped in this release</h2>
+      <p>The current browser release is a <strong>.tex-only</strong> editor. It
+        produces LaTeX source and does not generate PDF files. The components
+        below are compiled into or distributed with the current
+        <code>web/dist/</code> assets.</p>
+      <table>
+        <caption>Third-party components and notices for Songbook 0.1.0</caption>
+        <thead>
+          <tr>
+            <th scope="col">Component</th>
+            <th scope="col">Version</th>
+            <th scope="col">Shipped as</th>
+            <th scope="col">License</th>
+            <th scope="col">Copyright / notice</th>
+            <th scope="col">Local license text</th>
+            <th scope="col">Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Songbook</th>
+            <td>0.1.0</td>
+            <td>HTML, CSS, JavaScript, and WebAssembly</td>
+            <td>GPL-3.0-or-later</td>
+            <td>Copyright (C) 2026 Nikolai Øllegaard</td>
+            <td><a href="licenses/GPL-3.0.txt">GPL-3.0.txt</a></td>
+            <td><a href="songbook-source-0.1.0.tar.gz">Local source archive</a></td>
+          </tr>
+          <tr>
+            <th scope="row">aho-corasick</th>
+            <td>1.1.5</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>Unlicense OR MIT</td>
+            <td>Copyright (c) 2015 Andrew Gallant</td>
+            <td><a href="licenses/MIT-aho-corasick-memchr.txt">MIT</a>,
+              <a href="licenses/Unlicense.txt">Unlicense</a></td>
+            <td><a href="https://crates.io/crates/aho-corasick/1.1.5">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">anyhow</th>
+            <td>1.0.104</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>No separate copyright line in the upstream license files</td>
+            <td><a href="licenses/MIT-anyhow-once_cell-serde.txt">MIT</a>,
+              <a href="licenses/Apache-2.0-no-appendix.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/anyhow/1.0.104">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">cfg-if</th>
+            <td>1.0.5</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>Copyright (c) 2014 Alex Crichton</td>
+            <td><a href="licenses/MIT-cfg-if-js-sys-wasm-bindgen.txt">MIT</a>,
+              <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/cfg-if/1.0.5">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">js-sys</th>
+            <td>0.3.77</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>Copyright (c) 2014 Alex Crichton</td>
+            <td><a href="licenses/MIT-cfg-if-js-sys-wasm-bindgen.txt">MIT</a>,
+              <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/js-sys/0.3.77">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">memchr</th>
+            <td>2.8.3</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>Unlicense OR MIT</td>
+            <td>Copyright (c) 2015 Andrew Gallant</td>
+            <td><a href="licenses/MIT-aho-corasick-memchr.txt">MIT</a>,
+              <a href="licenses/Unlicense.txt">Unlicense</a></td>
+            <td><a href="https://crates.io/crates/memchr/2.8.3">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">once_cell</th>
+            <td>1.21.4</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>No separate copyright line in the upstream license files</td>
+            <td><a href="licenses/MIT-anyhow-once_cell-serde.txt">MIT</a>,
+              <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/once_cell/1.21.4">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">regex</th>
+            <td>1.13.1</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>Copyright (c) 2014 The Rust Project Developers</td>
+            <td><a href="licenses/MIT-regex.txt">MIT</a>,
+              <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/regex/1.13.1">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">regex-automata</th>
+            <td>0.4.18</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>Copyright (c) 2014 The Rust Project Developers</td>
+            <td><a href="licenses/MIT-regex.txt">MIT</a>,
+              <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/regex-automata/0.4.18">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">regex-syntax</th>
+            <td>0.8.11</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>Copyright (c) 2014 The Rust Project Developers</td>
+            <td><a href="licenses/MIT-regex.txt">MIT</a>,
+              <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/regex-syntax/0.8.11">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">serde</th>
+            <td>1.0.229</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>No separate copyright line in the upstream license files</td>
+            <td><a href="licenses/MIT-anyhow-once_cell-serde.txt">MIT</a>,
+              <a href="licenses/Apache-2.0-no-appendix.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/serde/1.0.229">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">serde_core</th>
+            <td>1.0.229</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>No separate copyright line in the upstream license files</td>
+            <td><a href="licenses/MIT-anyhow-once_cell-serde.txt">MIT</a>,
+              <a href="licenses/Apache-2.0-no-appendix.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/serde_core/1.0.229">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">serde-wasm-bindgen</th>
+            <td>0.6.5</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT</td>
+            <td>Copyright (c) 2019 Cloudflare, Inc.</td>
+            <td><a href="licenses/MIT-serde-wasm-bindgen.txt">MIT</a></td>
+            <td><a href="https://crates.io/crates/serde-wasm-bindgen/0.6.5">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">wasm-bindgen</th>
+            <td>0.2.100</td>
+            <td>Compiled into <code>songbook_wasm_bg.wasm</code>; generated
+              JavaScript glue ships as <code>songbook_wasm.js</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>Copyright (c) 2014 Alex Crichton</td>
+            <td><a href="licenses/MIT-cfg-if-js-sys-wasm-bindgen.txt">MIT</a>,
+              <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://crates.io/crates/wasm-bindgen/0.2.100">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">Rust standard library and compiler builtins</th>
+            <td>1.88.0</td>
+            <td>Linked into <code>songbook_wasm_bg.wasm</code></td>
+            <td>MIT OR Apache-2.0</td>
+            <td>Copyright (c) The Rust Project Contributors</td>
+            <td><a href="licenses/Rust-MIT.txt">MIT</a>,
+              <a href="licenses/Rust-Apache-2.0.txt">Apache-2.0</a></td>
+            <td><a href="https://github.com/rust-lang/rust/tree/1.88.0">Rust 1.88.0</a></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>No third-party JavaScript libraries, web fonts, images, or media files
+        are bundled. The application JavaScript, HTML, and CSS are part of
+        Songbook itself.</p>
+    </section>
+
+    <section aria-labelledby="planned-components">
+      <h2 id="planned-components">Planned PDF components — not bundled</h2>
+      <p><strong>Nothing in this section is present in the current `.tex`-only
+        web release.</strong> These entries record the planned PDF release so
+        that notices are reviewed before any PDF assets are distributed.</p>
+      <table>
+        <caption>Components planned for a future PDF release but not shipped now</caption>
+        <thead>
+          <tr>
+            <th scope="col">Component</th>
+            <th scope="col">Status in 0.1.0</th>
+            <th scope="col">Planned role</th>
+            <th scope="col">License</th>
+            <th scope="col">Local license text</th>
+            <th scope="col">Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">GlyphTeX</th>
+            <td>NOT BUNDLED</td>
+            <td>Browser PDF engine</td>
+            <td>GPL-3.0 (assumed; least-permissive path)</td>
+            <td><a href="licenses/GPL-3.0.txt">GPL-3.0.txt</a></td>
+            <td>Not bundled; record the exact distributed GlyphTeX source before
+              enabling PDF output</td>
+          </tr>
+          <tr>
+            <th scope="row">songs.sty (LaTeX songs package)</th>
+            <td>NOT BUNDLED</td>
+            <td>LaTeX package for PDF typesetting</td>
+            <td>GPL-2.0-or-later</td>
+            <td><a href="licenses/GPL-2.0.txt">GPL-2.0.txt</a></td>
+            <td><a href="https://ctan.org/pkg/songs">CTAN songs package</a></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>The current <code>web/dist/</code> output contains no PDF engine, PDF
+        output, PDF assets, GlyphTeX files, or <code>songs.sty</code>.</p>
+    </section>
+
+    <section aria-labelledby="release-scope">
+      <h2 id="release-scope">Release scope note</h2>
+      <p><code>Cargo.lock</code> also lists dependencies for the command-line and
+        terminal programs, plus build-time-only proc-macro crates. Those crates
+        are not compiled into or distributed with the current browser WASM
+        assets and are therefore not listed as shipped browser components.</p>
+      <p>The local license files are verbatim copies of the upstream license
+        files. The two Apache-2.0 copies differ only in whether the upstream
+        file includes the optional “How to apply” appendix. The MIT copies
+        differ only in their upstream copyright lines.</p>
+    </section>
+  </main>
+  <footer>
+    <p>Songbook — private, browser-local song editor. No uploads, no tracking.</p>
+    <p><a href="index.html">Back to Songbook</a></p>
+  </footer>
+</body>
+</html>
