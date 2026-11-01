@@ -1,0 +1,62 @@
+\documentclass[12pt]{article}
+\usepackage[chorded]{songs}
+
+\newindex{titleidx}{titleidx}
+\title{Demo Songbook}
+\author{Songbook Project}
+\date{}
+
+\begin{document}
+\maketitle
+\newpage
+\showindex{Index of Songs}{titleidx}
+\begin{songs}{titleidx}
+\beginsong{Let It Be}[by={The Beatles}]
+\textnote{Key: C}
+\beginverse*
+\[Am] \[F] \[C] \[G]
+\textnote{2x}
+\endverse*
+\beginverse
+\[Am]When I find myself in \[F]times of trouble,
+Mother \[C]Mary comes to \[G]me
+\[Am]Speaking words of \[F]wisdom, let it \[C]be
+\endverse
+\beginchorus
+\[Am]Let it \[F]be, let it \[C]be, let it \[G]be, yeah
+\[Am]There will be an \[F]answer, let it \[C]be
+\# This section intentionally left messy for triage testing
+some line the classifier won't know what to do with
+\endchorus
+\beginverse*
+\[Am]Let it \[F]be, let it \[C]be
+\endverse*
+\endsong
+\beginsong{Every Construct}[by={Test \& Co.}]
+\textnote{Tuning: D A D G A D}
+\textnote{Key: D}
+\capo{2}
+\beginverse*
+\[D] \[A] \[Bm] \[G]
+\textnote{2x}
+\endverse*
+\beginverse
+\[D]This verse exercises \[A]inline chords
+and writes \[Bm]100\% of R\&D \$5 \#1 under\_score \{braces\} \~tilde \^caret \\backslash
+Plain ambiguous lyric line
+\endverse
+\beginchorus
+\[G]Same chorus body \[A]over and over, with punctuation!
+\[D]Let it ring
+\endchorus
+\textnote{Chorus repeats}
+\beginverse*
+\[D]This is an unnumbered verse* context
+\[G]With another line
+\endverse*
+\beginverse*
+\[D]Goodbye \[A]now
+\endverse*
+\endsong
+\end{songs}
+\end{document}
