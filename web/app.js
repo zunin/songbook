@@ -194,7 +194,6 @@ function renderTriage(snapshot) {
 
 function renderTriageList(snapshot) {
   const list = els["triage-list"];
-  const focusedIndex = currentFocusedLineIndex();
 
   list.textContent = "";
   for (const line of snapshot.lines) {
@@ -222,7 +221,8 @@ function renderTriageList(snapshot) {
     kind.className = "line-kind";
     kind.textContent = line.classifier;
 
-    const described = `${verdictLabel(line)}${line.flag ? ", flagged" : ""}`;
+    const described = `status ${line.status}, verdict ${verdictLabel(line)}` +
+      `${line.flag ? ", flagged" : ""}${line.index === snapshot.position ? ", current" : ""}`;
 
     if (state.editing && line.index === snapshot.position) {
       item.append(marker, number, kind, buildEditInput(line));
@@ -245,18 +245,12 @@ function renderTriageList(snapshot) {
   }
 
   const current = list.querySelector(".current");
-  if (current && focusedIndex === snapshot.position) {
+  if (current) {
     const target = current.querySelector(".line-edit-input") ??
       current.querySelector(".line-select");
     if (target && document.activeElement !== target) target.focus();
   }
   els["triage-status"].textContent = statusText(snapshot);
-}
-
-function currentFocusedLineIndex() {
-  const active = document.activeElement;
-  const row = active?.closest?.(".triage-line");
-  return row ? Number(row.dataset.index) : -1;
 }
 
 function buildEditInput(line) {
@@ -327,8 +321,9 @@ function moveToLine(targetIndex) {
 }
 
 function renderPreviewPhase(snapshot) {
-  showScreen("preview-screen");
   const container = els["preview-content"];
+  const previewHadFocus = container.contains(document.activeElement);
+  showScreen("preview-screen");
   container.textContent = "";
   for (const row of sessionPreviewRows()) {
     const div = document.createElement("div");
@@ -336,6 +331,10 @@ function renderPreviewPhase(snapshot) {
     div.textContent = row.text === "" ? " " : row.text;
     container.append(div);
   }
+  container.scrollTop = Array.from(container.children)
+    .slice(0, snapshot.previewScroll)
+    .reduce((top, row) => top + row.offsetHeight, 0);
+  if (!previewHadFocus) container.focus();
   announce("Preview updated.");
 }
 
@@ -368,7 +367,7 @@ function downloadTex() {
     document.body.append(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     announce(`Downloaded ${stem}.tex.`);
   } catch (error) {
     announce(`Export failed: ${error}`);
@@ -387,7 +386,7 @@ function startOver() {
   els["file-input"].value = "";
   els["file-error"].textContent = "";
   showScreen("load-screen");
-  els["drop-zone"].focus();
+  els["file-input"].focus();
 }
 
 function loadFile(file) {
@@ -407,6 +406,8 @@ function loadFile(file) {
     } catch (error) {
       els["file-error"].textContent = String(error);
     }
+  }).catch((error) => {
+    els["file-error"].textContent = `Could not read ${file.name}: ${error}`;
   });
 }
 
@@ -462,14 +463,6 @@ function setupGlobalKeys() {
 function setupControls() {
   const zone = els["drop-zone"];
 
-  zone.addEventListener("click", () => els["file-input"].click());
-  zone.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      els["file-input"].click();
-    }
-  });
-
   els["file-input"].addEventListener("change", () => {
     const file = els["file-input"].files[0];
     if (file) loadFile(file);
@@ -522,7 +515,7 @@ async function boot() {
       "Make sure you serve this folder over HTTP(S).";
     return;
   }
-  els["drop-zone"].focus();
+  els["file-input"].focus();
 }
 
 boot();

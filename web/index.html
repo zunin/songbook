@@ -25,13 +25,12 @@
 
     <section id="load-screen" class="screen" aria-labelledby="load-heading">
       <h2 id="load-heading">Open a song file</h2>
-      <div id="drop-zone" role="button" tabindex="0"
-           aria-label="Choose or drop a .txt or .crd song file">
+      <div id="drop-zone">
         <p>Drop a <strong>.txt</strong> or <strong>.crd</strong> file here,</p>
         <p>or</p>
         <label class="file-label">
-          <span class="button-like">Choose a file</span>
-          <input type="file" id="file-input" accept=".txt,.crd" multiple="multiple">
+          <span class="button-like">Choose a .txt or .crd file</span>
+          <input type="file" id="file-input" accept=".txt,.crd">
         </label>
         <p id="file-error" role="alert" class="error"></p>
       </div>
@@ -50,7 +49,7 @@
 
     <section id="triage-screen" class="screen" aria-labelledby="triage-heading" hidden>
       <h2 id="triage-heading">Review each line</h2>
-      <p id="triage-status" class="status-bar"></p>
+      <p id="triage-status" class="status-bar" role="status" aria-live="polite" aria-atomic="true"></p>
       <p id="triage-live" class="visually-hidden" aria-live="polite"></p>
       <div id="triage-list" role="list"></div>
       <div id="current-controls">
