@@ -1,0 +1,20 @@
+\begin{idxblock}{\#}
+\idxentry{...}{\songlink{song1-4.2}{4}}
+\idxentry{???}{\songlink{song1-6.2}{6}}
+\end{idxblock}
+\begin{idxblock}{A}
+\idxentry{½ Half}{\songlink{song1-7.2}{7}}
+\idxaltentry{Alt With Spaces}{\songlink{song1-3.2}{3}}
+\end{idxblock}
+\begin{idxblock}{L}
+\idxentry{Leading Spaces}{\songlink{song1-2.2}{2}}
+\end{idxblock}
+\begin{idxblock}{T}
+\idxentry{Trailing Spaces}{\songlink{song1-1.2}{1}}
+\end{idxblock}
+\begin{idxblock}{W}
+\idxentry{Word Song}{\songlink{song1-5.2}{5}}
+\end{idxblock}
+\begin{idxblock}{Ÿ}
+\idxentry{µ Song}{\songlink{song1-8.2}{8}}
+\end{idxblock}

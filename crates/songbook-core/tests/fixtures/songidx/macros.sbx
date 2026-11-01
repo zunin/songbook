@@ -1,0 +1,20 @@
+\begin{idxblock}{1}
+\idxentry{100\% R\&D}{\songlink{song1-1.2}{1}}
+\end{idxblock}
+\begin{idxblock}{A}
+\idxentry{A\$ B\#C}{\songlink{song1-2.2}{2}}
+\end{idxblock}
+\begin{idxblock}{B}
+\idxentry{back\\slash}{\songlink{song1-5.2}{5}}
+\idxentry{bra\{ket\}}{\songlink{song1-4.2}{4}}
+\end{idxblock}
+\begin{idxblock}{S}
+\idxentry{\& Song,~The}{\songlink{song1-6.2}{6}}
+\end{idxblock}
+\begin{idxblock}{T}
+\idxentry{Tilde \~ Mark}{\songlink{song1-8.2}{8}}
+\end{idxblock}
+\begin{idxblock}{U}
+\idxentry{under\_score}{\songlink{song1-3.2}{3}}
+\idxentry{Up So \^ High}{\songlink{song1-7.2}{7}}
+\end{idxblock}

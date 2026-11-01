@@ -1,0 +1,13 @@
+\begin{idxblock}{A}
+\idxentry{Amazing Grace}{\songlink{song1-1.2}{1}\\\songlink{song1-3.2}{3}\\\songlink{song1-4.2}{4}}
+\end{idxblock}
+\begin{idxblock}{B}
+\idxentry{Breathe}{\songlink{song1-2.2}{2}}
+\end{idxblock}
+\begin{idxblock}{S}
+\idxentry{Song}{\songlink{song1-6.2}{6}}
+\idxentry{song}{\songlink{song1-7.2}{7}}
+\end{idxblock}
+\begin{idxblock}{Z}
+\idxentry{Zephyr}{\songlink{song1-5.2}{5}}
+\end{idxblock}
