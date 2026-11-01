@@ -44,9 +44,10 @@
 
     <section aria-labelledby="shipped-components">
       <h2 id="shipped-components">Components shipped in this release</h2>
-      <p>The current browser release is a <strong>.tex-only</strong> editor. It
-        produces LaTeX source and does not generate PDF files. The components
-        below are compiled into or distributed with the current
+      <p>The current browser release produces LaTeX source and compiles PDF
+        files locally in the browser; the PDF engine and TeX assets are
+        lazy-loaded from <code>pdf-assets/</code> on first PDF use. The
+        components below are compiled into or distributed with the current
         <code>web/dist/</code> assets.</p>
       <table>
         <caption>Third-party components and notices for Songbook 0.1.0</caption>
@@ -92,6 +93,15 @@
             <td><a href="https://crates.io/crates/anyhow/1.0.104">crates.io</a></td>
           </tr>
           <tr>
+            <th scope="row">BaKoMa CM/AMS fonts</th>
+            <td>1.1/12-Nov-94 CM + 1.2/19-Jan-95 AMS</td>
+            <td>Type 1/TrueType font files in the <code>pdf-assets/</code> TeX pack, fetched lazily on first PDF output</td>
+            <td>BaKoMa Fonts Licence (free redistribution, notice retention required, PDF embedding allowed)</td>
+            <td>Copyright (C) 1994, 1995, Basil K. Malyshev. All Rights Reserved.</td>
+            <td><a href="licenses/BaKoMa.txt">BaKoMa.txt</a>, also carried as <code>pdf-assets/licenses/LICENSE.bakoma.txt</code></td>
+            <td><a href="https://mirrors.ctan.org/fonts/cm/ps-type1/bakoma.zip">CTAN bakoma.zip</a> (sha256 <code>6fb67f2fdaf5846fe81734d04d69096b847d2b41ca6da7923a9a73437e588734</code>); pinned sources and the build manifest ship with the assets (<a href="pdf-assets/manifest.json">pdf-assets/manifest.json</a>, <code>pdf-assets/sources/</code>)</td>
+          </tr>
+          <tr>
             <th scope="row">cfg-if</th>
             <td>1.0.5</td>
             <td>Compiled into <code>songbook_wasm_bg.wasm</code></td>
@@ -100,6 +110,33 @@
             <td><a href="licenses/MIT-cfg-if-js-sys-wasm-bindgen.txt">MIT</a>,
               <a href="licenses/Apache-2.0.txt">Apache-2.0</a></td>
             <td><a href="https://crates.io/crates/cfg-if/1.0.5">crates.io</a></td>
+          </tr>
+          <tr>
+            <th scope="row">classes / size12.clo (LaTeX base)</th>
+            <td>2026-06-04 v1.4n (LaTeX base)</td>
+            <td><code>size12.clo</code> in the <code>pdf-assets/</code> TeX pack, docstrip-generated from pinned <code>classes.dtx</code>/<code>classes.ins</code>, fetched lazily on first PDF output</td>
+            <td>LPPL 1.3c</td>
+            <td>Copyright (C) 1993-2026 The LaTeX Project and any individual authors listed elsewhere in the file</td>
+            <td>No verbatim license file carried; <a href="https://www.latex-project.org/lppl/lppl-1-3c.txt">LPPL 1.3c text</a></td>
+            <td><a href="https://mirrors.ctan.org/macros/latex/base/classes.dtx">CTAN classes.dtx</a> (sha256 <code>7d2add3d0c5f4deff4aaae06e61c0332aef89b19e56be26c105cb8bc34189a41</code>); docstrip sources (<code>classes.dtx</code>, <code>classes.ins</code>) are carried in <code>pdf-assets/sources/</code> (see <a href="pdf-assets/manifest.json">pdf-assets/manifest.json</a>)</td>
+          </tr>
+          <tr>
+            <th scope="row">glyphtex-engine (Tectonic WASM engine)</th>
+            <td>0.1.0</td>
+            <td><code>engine/tectonic.wasm</code>, <code>engine/bundle.tar.gz</code>, and engine JavaScript in <code>pdf-assets/</code>, fetched lazily on first PDF output</td>
+            <td>GPL-3.0 (operative; conservative project decision — npm package metadata declares MIT)</td>
+            <td>Upstream GPL-3.0 <code>LICENSE</code> carried from the <code>kanakkholwal/glyphtex</code> repo at the pinned commit; do not ship under MIT without a written upstream grant</td>
+            <td><a href="licenses/GPL-3.0.txt">GPL-3.0.txt</a>; upstream copy carried as <code>pdf-assets/licenses/LICENSE.glyphtex</code></td>
+            <td><a href="https://registry.npmjs.org/glyphtex-engine/-/glyphtex-engine-0.1.0.tgz">npm glyphtex-engine 0.1.0</a> (sha256 <code>66498cff5d1c9338f07624630837def8344bf7570e37599d3c7b1a1f9fdae55a</code>); complete corresponding source carried in <code>pdf-assets/sources/</code> (see <a href="pdf-assets/manifest.json">pdf-assets/manifest.json</a>)</td>
+          </tr>
+          <tr>
+            <th scope="row">glyphtex (upstream repo source)</th>
+            <td>commit d4b44ac9d992297bf597de5bb0afa9b957eeac7c (2026-10-04)</td>
+            <td>Complete corresponding source for the WASM engine build, carried as <code>pdf-assets/sources/glyphtex-repo.tar.gz</code></td>
+            <td>GPL-3.0</td>
+            <td>Upstream GPL-3.0 <code>LICENSE</code> carried at the pinned commit</td>
+            <td><a href="licenses/GPL-3.0.txt">GPL-3.0.txt</a>; upstream copy carried as <code>pdf-assets/licenses/LICENSE.glyphtex</code></td>
+            <td><a href="https://github.com/kanakkholwal/glyphtex/archive/d4b44ac9d992297bf597de5bb0afa9b957eeac7c.tar.gz">GitHub archive tarball</a> (sha256 <code>db12bec7ee7531e9c52dd3a7f2f6b0718b1dbd6fa42363ef59d9386d71bed687</code>); see <a href="pdf-assets/manifest.json">pdf-assets/manifest.json</a></td>
           </tr>
           <tr>
             <th scope="row">js-sys</th>
@@ -191,6 +228,15 @@
             <td><a href="https://crates.io/crates/serde-wasm-bindgen/0.6.5">crates.io</a></td>
           </tr>
           <tr>
+            <th scope="row">songs (LaTeX songs package)</th>
+            <td>3.1 (2018/09/12)</td>
+            <td><code>songs.sty</code> in the <code>pdf-assets/</code> TeX pack, docstrip-generated from pinned <code>songs.dtx</code>/<code>songs.ins</code>, fetched lazily on first PDF output</td>
+            <td>GPL-2.0-or-later</td>
+            <td>Copyright (C) 2018 Kevin W. Hamlen</td>
+            <td><a href="licenses/GPL-2.0.txt">GPL-2.0.txt</a>; upstream copy carried as <code>pdf-assets/licenses/LICENSE.songs.txt</code></td>
+            <td><a href="https://mirrors.ctan.org/macros/latex/contrib/songs.zip">CTAN songs.zip</a> (sha256 <code>9449fc00c63df3af5e4bf01a7c54badced85d7286c86e8a9ee90b5c51b2d1c77</code>); docstrip sources are carried in <code>pdf-assets/sources/</code> (see <a href="pdf-assets/manifest.json">pdf-assets/manifest.json</a>)</td>
+          </tr>
+          <tr>
             <th scope="row">wasm-bindgen</th>
             <td>0.2.100</td>
             <td>Compiled into <code>songbook_wasm_bg.wasm</code>; generated
@@ -213,50 +259,25 @@
           </tr>
         </tbody>
       </table>
-      <p>No third-party JavaScript libraries, web fonts, images, or media files
-        are bundled. The application JavaScript, HTML, and CSS are part of
-        Songbook itself.</p>
+      <p>No third-party JavaScript libraries, images, or media files are
+        bundled. The application JavaScript, HTML, and CSS are part of
+        Songbook itself. The PDF engine and TeX components listed above are
+        shipped only as <code>web/dist/pdf-assets/</code> and are loaded
+        lazily — nothing PDF-related is fetched until the user first requests
+        a PDF, and the assets contain no song content.</p>
     </section>
 
-    <section aria-labelledby="planned-components">
-      <h2 id="planned-components">Planned PDF components — not bundled</h2>
-      <p><strong>Nothing in this section is present in the current `.tex`-only
-        web release.</strong> These entries record the planned PDF release so
-        that notices are reviewed before any PDF assets are distributed.</p>
-      <table>
-        <caption>Components planned for a future PDF release but not shipped now</caption>
-        <thead>
-          <tr>
-            <th scope="col">Component</th>
-            <th scope="col">Status in 0.1.0</th>
-            <th scope="col">Planned role</th>
-            <th scope="col">License</th>
-            <th scope="col">Local license text</th>
-            <th scope="col">Source</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <th scope="row">GlyphTeX</th>
-            <td>NOT BUNDLED</td>
-            <td>Browser PDF engine</td>
-            <td>GPL-3.0 (assumed; least-permissive path)</td>
-            <td><a href="licenses/GPL-3.0.txt">GPL-3.0.txt</a></td>
-            <td>Not bundled; record the exact distributed GlyphTeX source before
-              enabling PDF output</td>
-          </tr>
-          <tr>
-            <th scope="row">songs.sty (LaTeX songs package)</th>
-            <td>NOT BUNDLED</td>
-            <td>LaTeX package for PDF typesetting</td>
-            <td>GPL-2.0-or-later</td>
-            <td><a href="licenses/GPL-2.0.txt">GPL-2.0.txt</a></td>
-            <td><a href="https://ctan.org/pkg/songs">CTAN songs package</a></td>
-          </tr>
-        </tbody>
-      </table>
-      <p>The current <code>web/dist/</code> output contains no PDF engine, PDF
-        output, PDF assets, GlyphTeX files, or <code>songs.sty</code>.</p>
+    <section aria-labelledby="pdf-assets">
+      <h2 id="pdf-assets">PDF assets</h2>
+      <p>The PDF engine and TeX components are bundled as
+        <code>web/dist/pdf-assets/</code>, built only by
+        <code>web/build-pdf-assets.sh</code> from hash-pinned upstream sources.
+        Their authoritative component record is
+        <a href="pdf-assets/manifest.json">pdf-assets/manifest.json</a>, which
+        ships with the assets together with the complete corresponding sources
+        (<code>pdf-assets/sources/</code>) and the upstream license files
+        (<code>pdf-assets/licenses/</code>). No PDF assets ship without their
+        manifest and sources.</p>
     </section>
 
     <section aria-labelledby="release-scope">
@@ -268,7 +289,11 @@
       <p>The local license files are verbatim copies of the upstream license
         files. The two Apache-2.0 copies differ only in whether the upstream
         file includes the optional “How to apply” appendix. The MIT copies
-        differ only in their upstream copyright lines.</p>
+        differ only in their upstream copyright lines. <code>BaKoMa.txt</code>
+        is the verbatim upstream <code>LICENCE</code> file from the BaKoMa
+        font pack. The PDF assets additionally carry verbatim upstream license
+        files under <code>pdf-assets/licenses/</code> and their pinned upstream
+        sources under <code>pdf-assets/sources/</code>.</p>
     </section>
   </main>
   <footer>
