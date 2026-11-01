@@ -26,11 +26,21 @@ RUN rustup target add wasm32-unknown-unknown \
     && wasm-bindgen --version
 USER root
 
-# Node.js runs the PDF asset build's smoke test (the default final step of
-# web/build-pdf-assets.sh) and the external PDF smoke; Debian bookworm's
-# nodejs covers the plain-stdlib usage in web/pdf/test/smoke-node.mjs, and
-# poppler-utils provides the pdftotext/pdfinfo that smoke compares with.
+# poppler-utils provides the pdftotext/pdfinfo that the PDF smoke compares
+# with. (Node itself is installed from a pinned tarball below.)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs poppler-utils \
+    && apt-get install -y --no-install-recommends poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
-    && node --version && pdftotext -v 2>&1 | head -1 && pdfinfo -v 2>&1 | head -1
+    && pdftotext -v 2>&1 | head -1 && pdfinfo -v 2>&1 | head -1
+
+# Node >= 20 is required to instantiate the songbook wasm: rustc 1.88 emits
+# wasm typed function references, which node 18's V8 rejects. Debian
+# bookworm ships node 18, so pin the LTS tarball (house style: pinned
+# version + sha256, like tectonic above). Keep NODE_VERSION in step with
+# supported LTS; the PDF smoke and worker run under it.
+ARG NODE_VERSION=22.23.4
+RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
+    && echo "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
+    && rm /tmp/node.tar.xz \
+    && node --version && pdftotext -v 2>&1 | head -1
