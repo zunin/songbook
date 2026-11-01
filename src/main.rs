@@ -49,8 +49,10 @@ struct Cli {
     yes: bool,
 
     /// Shift every chord by this many semitones (negative = down, e.g.
-    /// --transpose=-2); names are respelled from a fixed sharp ladder upward
-    /// and flat ladder downward (C+1=C#, Bb-1=A)
+    /// --transpose=-2); with a `Key:` header, names are respelled in that key
+    /// (F+5=Bb under Key: C) and the header itself follows (Key: C +2 becomes
+    /// Key: D); without one, a fixed sharp ladder applies upward and a flat
+    /// ladder downward (C+1=C#, Bb-1=A)
     #[arg(long, default_value_t = 0, allow_hyphen_values = true)]
     transpose: i32,
 }
