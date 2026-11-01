@@ -12,8 +12,9 @@ fn latex_special_re() -> &'static Regex {
     LATEX_SPECIAL_RE.get_or_init(|| Regex::new(r"([&%$#_{}~^\\])").unwrap())
 }
 
-/// Escapes LaTeX special characters in lyric text.
-fn escape(text: &str) -> String {
+/// Escapes LaTeX special characters in lyric and metadata text. Shared with
+/// the book renderer so manifest titles/authors are escaped identically.
+pub(crate) fn escape(text: &str) -> String {
     latex_special_re().replace_all(text, "\\$1").into_owned()
 }
 

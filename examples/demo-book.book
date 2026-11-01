@@ -1,0 +1,6 @@
+# Demo book (ADR0018 Phase 1): the two example songs, in manifest order.
+Title: Demo Songbook
+Author: Songbook Project
+
+let-it-be.txt
+synthetic.txt

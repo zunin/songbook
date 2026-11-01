@@ -1,7 +1,8 @@
 mod batch;
+mod book;
 mod tui;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser as ClapParser;
 use songbook_core::{audit, latex, parser};
 use std::io::IsTerminal;
@@ -11,25 +12,39 @@ use std::path::{Path, PathBuf};
 #[command(
     name = "songbook",
     version,
-    about = "Convert ASCII tabs (chord-over-lyrics) to LaTeX songs-package format"
+    about = "Convert ASCII tabs (chord-over-lyrics) to LaTeX songs-package format, one song or a whole book"
 )]
 struct Cli {
-    /// Input .txt/.crd file, or a directory whose .txt/.crd files are all converted
-    input: PathBuf,
+    /// Input .txt/.crd file, or a directory whose .txt/.crd files are all
+    /// converted (required unless --book is given)
+    input: Option<PathBuf>,
 
-    /// Output .tex path (file input) or output directory (directory input)
+    /// Build one LaTeX document from a book manifest: a plain-text list of
+    /// .txt/.crd paths (one per line, # comments allowed), optionally
+    /// preceded by Title:/Author: headers
+    #[arg(long)]
+    book: Option<PathBuf>,
+
+    /// Output .tex path (file input), output directory (directory input), or
+    /// output .tex for --book (default: the manifest's stem + .tex beside it)
     #[arg(short, long)]
     out: Option<PathBuf>,
+
+    /// With --book, also emit the chord index (the title index is always
+    /// included)
+    #[arg(long)]
+    chord_index: bool,
 
     /// With a directory input, also convert files in subdirectories
     #[arg(long)]
     recursive: bool,
 
-    /// Emit a standalone compilable LaTeX document
+    /// Emit a standalone compilable LaTeX document (implied for --book)
     #[arg(long)]
     standalone: bool,
 
-    /// Skip the TUI review, trust the heuristics, and print an audit of every guess
+    /// Skip the TUI review, trust the heuristics, and print an audit of every
+    /// guess (no-op for --book, which is always non-interactive)
     #[arg(short = 'y', long)]
     yes: bool,
 }
@@ -37,13 +52,30 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if cli.input.is_dir() {
-        let summary = batch::run(
-            &cli.input,
-            cli.out.as_deref(),
-            cli.recursive,
-            cli.standalone,
-        )?;
+    if let Some(manifest) = &cli.book {
+        if cli.input.is_some() {
+            bail!("--book cannot be combined with a positional input file");
+        }
+        if cli.recursive {
+            bail!("--recursive has no effect with --book (a book lists its songs explicitly)");
+        }
+        let summary = book::run(manifest, cli.out.as_deref(), cli.chord_index)?;
+        println!(
+            "Included {}, skipped {}.",
+            summary.included, summary.skipped
+        );
+        if summary.skipped > 0 {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    let Some(input) = cli.input.as_deref() else {
+        bail!("expected an input .txt/.crd file or directory, or --book <manifest>");
+    };
+
+    if input.is_dir() {
+        let summary = batch::run(input, cli.out.as_deref(), cli.recursive, cli.standalone)?;
         println!(
             "Converted {}, skipped {}.",
             summary.converted, summary.skipped
@@ -54,25 +86,22 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    run_single(&cli)
+    run_single(input, &cli)
 }
 
-fn run_single(cli: &Cli) -> Result<()> {
-    let raw = std::fs::read_to_string(&cli.input)
-        .with_context(|| format!("reading input {}", cli.input.display()))?;
+fn run_single(input: &Path, cli: &Cli) -> Result<()> {
+    let raw = std::fs::read_to_string(input)
+        .with_context(|| format!("reading input {}", input.display()))?;
     if raw.trim().is_empty() {
-        anyhow::bail!("input file {} is empty", cli.input.display());
+        anyhow::bail!("input file {} is empty", input.display());
     }
-    let out_path = cli
-        .out
-        .clone()
-        .unwrap_or_else(|| default_out_path(&cli.input));
+    let out_path = cli.out.clone().unwrap_or_else(|| default_out_path(input));
 
     let song = parser::classify::parse(&raw);
     if song.sections.is_empty() {
         anyhow::bail!(
             "no song sections found in {}; the input may be only noise or metadata",
-            cli.input.display()
+            input.display()
         );
     }
 
@@ -97,7 +126,7 @@ fn run_single(cli: &Cli) -> Result<()> {
     }
 
     let tex = latex::render::render(&song, cli.standalone)
-        .with_context(|| format!("rendering {}", cli.input.display()))?;
+        .with_context(|| format!("rendering {}", input.display()))?;
     std::fs::write(&out_path, tex)
         .with_context(|| format!("writing output {}", out_path.display()))?;
     println!("Wrote {}", out_path.display());
