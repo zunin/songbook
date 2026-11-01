@@ -61,10 +61,7 @@ printf '{"type": "module"}\n' > "$out_dir/package.json"
 
 if command -v wasm-opt >/dev/null 2>&1; then
   echo "==> wasm-opt -Oz"
-  # rustc (1.88+) emits bulk-memory and sign-ext instructions by default;
-  # older Binaryen validators reject them unless the features are enabled.
-  # -all keeps this working across toolchain versions.
-  wasm-opt -all -Oz "$out_dir/songbook_wasm_bg.wasm" -o "$out_dir/songbook_wasm_bg.wasm"
+  wasm-opt -Oz "$out_dir/songbook_wasm_bg.wasm" -o "$out_dir/songbook_wasm_bg.wasm"
 else
   echo "==> wasm-opt not available; skipping size optimization"
 fi
