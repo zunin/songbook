@@ -5,11 +5,11 @@ RUN curl -Ls "https://github.com/tectonic-typesetting/tectonic/releases/download
     | tar xz -C /usr/local/bin tectonic \
     && tectonic --version
 
-# wasm-opt, used optionally by web/build.sh for size optimization.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends binaryen \
-    && rm -rf /var/lib/apt/lists/* \
-    && wasm-opt --version
+# NOTE: wasm-opt (binaryen) is deliberately NOT installed here. Debian
+# bookworm's binaryen 108 re-encodes rustc 1.88's wasm output (typed
+# function references) into something V8 rejects at validation, so
+# web/build.sh's optional wasm-opt step must stay skipped. Pin a modern
+# binaryen release (with sha256, house style) before re-enabling it.
 
 # web/build.sh requires the wasm32 rust target and a wasm-bindgen-cli whose
 # version exactly matches the `wasm-bindgen = "=0.2.100"` pin in
