@@ -53,7 +53,11 @@ fetch() {
     say "cache: $name (cached)"
   else
     say "fetch: $name from $url"
-    curl -fsSL --retry 3 -o "$out" "$url"
+    # --retry-all-errors: mirrors.ctan.org rotates across mirrors whose TLS
+    # chains vary; a transient cert failure must retry (likely a different
+    # mirror). Content integrity is anchored by the sha256 pin below, not by
+    # the transport.
+    curl -fsSL --retry 5 --retry-all-errors -o "$out" "$url"
   fi
   local got; got="$(hash_of "$out")"
   if [[ "$got" != "$want" ]]; then

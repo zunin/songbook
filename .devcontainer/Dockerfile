@@ -32,9 +32,11 @@ RUN rustup target add wasm32-unknown-unknown \
 USER root
 
 # poppler-utils provides the pdftotext/pdfinfo that the PDF smoke compares
-# with. (Node itself is installed from a pinned tarball below.)
+# with, and an explicitly refreshed CA store keeps the pinned-upstream
+# fetches (web/build-pdf-assets.sh) working across rotating CTAN mirrors.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends poppler-utils \
+    && apt-get install -y --no-install-recommends poppler-utils ca-certificates \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && pdftotext -v 2>&1 | head -1 && pdfinfo -v 2>&1 | head -1
 
