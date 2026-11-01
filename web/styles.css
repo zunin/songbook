@@ -97,7 +97,7 @@ button.primary {
 }
 
 button:focus-visible, [role="button"]:focus-visible, a:focus-visible,
-input:focus-visible, [tabindex]:focus-visible {
+input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
@@ -158,6 +158,36 @@ input:focus-visible, [tabindex]:focus-visible {
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* Paste input (ADR0020): one shared style for the load-screen textarea and
+   the "Add a pasted song" boxes on the book form and book export screens. */
+.paste-box {
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+.paste-box h3 { margin-top: 0; }
+.paste-box label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.paste-box textarea {
+  display: block;
+  width: 100%;
+  min-height: 8rem;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  padding: 0.35rem 0.5rem;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+.paste-box .actions { margin-bottom: 0; }
+.paste-box .error { margin: 0.25rem 0 0; }
 
 .status-bar {
   font-family: var(--mono);

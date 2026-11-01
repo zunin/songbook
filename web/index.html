@@ -37,6 +37,16 @@
           in order and exported as one book.</p>
         <p id="file-error" role="alert" class="error"></p>
       </div>
+      <div id="paste-box" class="paste-box">
+        <label for="paste-input">Paste tab text</label>
+        <textarea id="paste-input" rows="8" spellcheck="false"></textarea>
+        <div class="actions">
+          <button type="button" id="paste-use" class="primary">Use pasted text</button>
+        </div>
+        <p class="hint">Pasted text stays in this browser tab; it is never sent
+          anywhere or saved between visits.</p>
+        <p id="paste-error" role="alert" class="error"></p>
+      </div>
     </section>
 
     <div id="book-banner" hidden>
@@ -48,7 +58,8 @@
       <h2 id="book-form-heading">Book details</h2>
       <p class="hint">Both fields are optional and special characters are
         escaped by the songbook engine. Songs appear in the book in the order
-        the files were chosen.</p>
+        the sources were added (chosen files first, then pasted songs in the
+        order added).</p>
       <div class="metadata-field">
         <label for="book-title-input">Title
           <input type="text" id="book-title-input" autocomplete="off">
@@ -61,6 +72,15 @@
         </label>
         <span class="hint">(optional)</span>
       </div>
+      <div id="book-paste-box" class="paste-box">
+        <h3>Add a pasted song</h3>
+        <label for="book-paste-input">Paste tab text</label>
+        <textarea id="book-paste-input" rows="6" spellcheck="false"></textarea>
+        <div class="actions">
+          <button type="button" id="book-paste-add">Add pasted song</button>
+        </div>
+        <p id="book-paste-error" role="alert" class="error"></p>
+      </div>
       <div class="actions">
         <button type="button" id="book-form-continue" class="primary">Start triage</button>
         <button type="button" id="book-form-reset">Start over</button>
@@ -70,8 +90,8 @@
 
     <section id="metadata-screen" class="screen" aria-labelledby="metadata-heading" hidden>
       <h2 id="metadata-heading">Song metadata</h2>
-      <p id="metadata-hint">Fields marked “inferred” were guessed from the file.
-        Correct anything that is wrong, then continue.</p>
+      <p id="metadata-hint">Fields marked “inferred” were guessed from the
+        song text. Correct anything that is wrong, then continue.</p>
       <form id="metadata-form" novalidate></form>
       <div class="actions">
         <button type="button" id="metadata-back" hidden>Back</button>
@@ -136,6 +156,15 @@
       <h2 id="book-export-heading">Book export</h2>
       <p id="book-summary" role="status" aria-live="polite" aria-atomic="true"></p>
       <div id="book-export-failed" hidden></div>
+      <div id="export-paste-box" class="paste-box">
+        <h3>Add a pasted song</h3>
+        <label for="export-paste-input">Paste tab text</label>
+        <textarea id="export-paste-input" rows="6" spellcheck="false"></textarea>
+        <div class="actions">
+          <button type="button" id="export-paste-add">Add pasted song</button>
+        </div>
+        <p id="export-paste-error" role="alert" class="error"></p>
+      </div>
       <div class="actions">
         <button type="button" id="book-export-back" hidden>Back to last song</button>
         <label class="checkbox-label">

@@ -11,8 +11,10 @@ const state = {
   pdfBusy: false,
   screen: "load-screen",
   // Book mode (ADR0019): null in the single-song flow, otherwise
-  // { results: [{ file, name, session, error, loading }, …],
-  //   current, title, author, chordIndex, nav } — memory only (P3).
+  // { results: [source, …], current, title, author, chordIndex, nav } —
+  // memory only (P3). A source (ADR0020) is either a chosen file
+  // ({ kind: "file", file, name, … }) or pasted tab text held in `text`
+  // ({ kind: "paste", text, name, … }).
   book: null,
 };
 
@@ -26,6 +28,9 @@ function initEls() {
   for (const id of [
     "load-screen", "metadata-screen", "triage-screen", "preview-screen",
     "drop-zone", "file-input", "file-error",
+    "paste-input", "paste-use", "paste-error",
+    "book-paste-input", "book-paste-add", "book-paste-error",
+    "export-paste-input", "export-paste-add", "export-paste-error",
     "metadata-form", "metadata-continue", "metadata-error",
     "triage-status", "triage-live", "triage-list", "start-over",
     "preview-content", "preview-back", "standalone-toggle", "download-tex",
@@ -458,16 +463,20 @@ function refresh() {
   render();
 }
 
-// --- Book mode (ADR0019): several files, triaged one at a time in the
+// --- Book mode (ADR0019): several songs, triaged one at a time in the
 // existing session screens, composed into one book by core's `composeBook`.
-// Everything lives in `state.book` (memory only, P3); order follows file
-// selection; failed files are marked, reported, and excluded — never dropped
-// silently.
+// Each entry is a source (ADR0020): either a chosen file or pasted tab text
+// kept in `entry.text` (memory only, P3). `results` order is add order —
+// the initially chosen files in selection order, then each pasted song in
+// the order it was added — and that one array order is the triage order and
+// the book part order alike. Failed sources are marked, reported, and
+// excluded — never dropped silently.
 
 function startBook(files) {
   state.book = {
     results: files.map((file) => (
-      { file, name: file.name, session: null, error: null, loading: false })),
+      { kind: "file", file, text: null, name: file.name,
+        session: null, error: null, loading: false })),
     current: -1,
     title: "",
     author: "",
@@ -477,6 +486,58 @@ function startBook(files) {
     nav: 0,
   };
   showBookForm();
+}
+
+// "2 files + 1 pasted song" — the shape of the book's sources.
+function bookSourceSummary(book) {
+  const files = book.results.filter((e) => e.kind === "file").length;
+  const pastes = book.results.filter((e) => e.kind === "paste").length;
+  const parts = [];
+  if (files > 0) parts.push(`${files} ${files === 1 ? "file" : "files"}`);
+  if (pastes > 0) {
+    parts.push(`${pastes} ${pastes === 1 ? "pasted song" : "pasted songs"}`);
+  }
+  return parts.join(" + ");
+}
+
+function bookFormStatusText(book) {
+  return `${bookSourceSummary(book)} added. Songs are triaged one at a ` +
+    "time and appear in the book in the order the sources were added.";
+}
+
+// Display label for the next pasted entry: "Pasted song", then
+// "Pasted song 2", "Pasted song 3", … so notices can tell them apart.
+function nextPasteName(book) {
+  const pastes = book.results.filter((e) => e.kind === "paste").length;
+  return pastes === 0 ? "Pasted song" : `Pasted song ${pastes + 1}`;
+}
+
+// Adds the textarea's contents as a new pasted source at the end of the
+// book (ADR0020). Only the raw text is stored; a session is created when
+// triage reaches the entry, exactly as for a file — so text the engine
+// cannot use fails there, with the same per-entry report as a failed file.
+function addPastedSong(screen) {
+  const book = state.book;
+  if (!book) return;
+  const input = els[screen === "form" ? "book-paste-input" : "export-paste-input"];
+  const error = els[screen === "form" ? "book-paste-error" : "export-paste-error"];
+  const raw = input.value;
+  if (raw.trim().length === 0) {
+    error.textContent = "Paste some tab text first.";
+    return;
+  }
+  book.results.push({
+    kind: "paste", file: null, text: raw, name: nextPasteName(book),
+    session: null, error: null, loading: false,
+  });
+  input.value = "";
+  error.textContent = "";
+  if (screen === "form") {
+    els["book-form-status"].textContent = bookFormStatusText(book);
+    input.focus();
+  } else {
+    bookForward(); // triage the appended song right away
+  }
 }
 
 function showBookForm() {
@@ -489,10 +550,7 @@ function showBookForm() {
   els["book-title-input"].value = book.title;
   els["book-author-input"].value = book.author;
   showScreen("book-form-screen");
-  const count = book.results.length;
-  els["book-form-status"].textContent =
-    `${count} ${count === 1 ? "file" : "files"} selected. Songs are triaged ` +
-    "one at a time and appear in the book in the order chosen.";
+  els["book-form-status"].textContent = bookFormStatusText(book);
   els["book-title-input"].focus();
 }
 
@@ -512,7 +570,7 @@ function bookForward() {
   if (here && here.loading) return; // wait for the in-flight load
   for (let i = book.current + 1; i < book.results.length; i += 1) {
     const entry = book.results[i];
-    if (entry.error) continue;  // failed files stay excluded
+    if (entry.error) continue;  // failed sources stay excluded
     if (entry.loading) return;
     book.nav += 1;
     book.current = i;
@@ -583,6 +641,19 @@ function loadBookSong(index) {
       bookForward();
     }
   };
+  if (entry.kind === "paste") {
+    // Pasted text (ADR0020) is already in memory: the same Session-creation
+    // path as file contents, without the file read or extension check.
+    entry.loading = false;
+    try {
+      entry.session = new SongbookSession(entry.text);
+    } catch (error) {
+      fail(String(error));
+      return;
+    }
+    if (book.current === index && book.nav === nav) showSong(index);
+    return;
+  }
   const extension = entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase();
   if (!ACCEPTED_EXTENSIONS.includes(extension)) {
     fail("unsupported file type (please use .txt or .crd files)");
@@ -630,9 +701,7 @@ function showBookExport() {
   showScreen("book-export-screen");
   els["book-summary"].textContent =
     `${done} ${done === 1 ? "song" : "songs"} ready for the book` +
-    (failed.length
-      ? ` · ${failed.length} ${failed.length === 1 ? "file" : "files"} skipped`
-      : "") + ".";
+    (failed.length ? ` · ${failed.length} skipped` : "") + ".";
   const failedBox = els["book-export-failed"];
   failedBox.textContent = "";
   for (const entry of failed) {
@@ -649,7 +718,7 @@ function showBookExport() {
   els["book-export-back"].hidden = !exportable;
   bookStatus(exportable ? "" :
     "No songs loaded successfully, so there is nothing to export. " +
-    "Press Start over to choose files again.");
+    "Add a pasted song below or press Start over to choose files again.");
   els["book-pdf-status"].textContent = "";
   els["book-pdf-status"].className = "";
   if (exportable) els["book-export-tex"].focus();
@@ -673,11 +742,22 @@ function saveBlob(blob, filename) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Download stem: a chosen file keeps its filename; a pasted song has none,
+// so the stem derives from the song title once known — every snapshot
+// carries the confirmed metadata — falling back to "song".
+function downloadStem() {
+  if (state.fileName) return state.fileName.replace(/\.[^.]+$/, "") || "song";
+  const title = state.snapshot?.metadata.title ?? "";
+  const stem = title.trim()
+    .replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+  return stem || "song";
+}
+
 function downloadTex() {
   try {
     const tex = buildTex();
     if (tex === null) return;
-    const stem = state.fileName.replace(/\.[^.]+$/, "") || "song";
+    const stem = downloadStem();
     saveBlob(new Blob([tex], { type: "text/x-tex" }), `${stem}.tex`);
     announce(`Downloaded ${stem}.tex.`);
   } catch (error) {
@@ -731,7 +811,7 @@ async function downloadPdf() {
       pdfStatus("No song is loaded.", "error");
       return;
     }
-    const stem = state.fileName.replace(/\.[^.]+$/, "") || "song";
+    const stem = downloadStem();
     await ensurePdfEngine(pdfStatus);
     pdfStatus("Compiling PDF…", "hint");
     const result = await state.pdfEngine.compile(tex);
@@ -863,6 +943,12 @@ function startOver() {
   els["metadata-form"].textContent = "";
   els["file-input"].value = "";
   els["file-error"].textContent = "";
+  els["paste-input"].value = "";
+  els["paste-error"].textContent = "";
+  els["book-paste-input"].value = "";
+  els["book-paste-error"].textContent = "";
+  els["export-paste-input"].value = "";
+  els["export-paste-error"].textContent = "";
   els["book-file-error"].hidden = true;
   els["book-file-error"].textContent = "";
   showScreen("load-screen");
@@ -889,6 +975,30 @@ function loadFile(file) {
   }).catch((error) => {
     els["file-error"].textContent = `Could not read ${file.name}: ${error}`;
   });
+}
+
+// --- Paste input (ADR0020): the load screen's textarea feeds the SAME
+// session-creation path as a dropped file. No Clipboard API is used — the
+// user pastes with the browser's own gesture — and the text lives only in
+// the textarea and the session (memory, cleared by Start over).
+
+function usePastedText() {
+  const raw = els["paste-input"].value;
+  if (raw.trim().length === 0) {
+    els["paste-error"].textContent =
+      "Paste some tab text first, or choose a file above.";
+    return;
+  }
+  try {
+    state.session = new SongbookSession(raw);
+  } catch (error) {
+    els["paste-error"].textContent = String(error);
+    return;
+  }
+  state.fileName = ""; // no filename: download names derive from the title
+  els["paste-error"].textContent = "";
+  els["metadata-form"].textContent = "";
+  refresh();
 }
 
 function setupGlobalKeys() {
@@ -973,6 +1083,7 @@ function setupControls() {
   els["metadata-back"].addEventListener("click", bookBack);
   els["start-over"].addEventListener("click", startOver);
   els["triage-back"].addEventListener("click", bookBack);
+  els["paste-use"].addEventListener("click", usePastedText);
 
   for (const button of els["triage-screen"].querySelectorAll("button[data-action]")) {
     button.addEventListener("click", () => {
@@ -1000,6 +1111,8 @@ function setupControls() {
 
   els["book-form-continue"].addEventListener("click", startBookTriage);
   els["book-form-reset"].addEventListener("click", startOver);
+  els["book-paste-add"].addEventListener("click", () => addPastedSong("form"));
+  els["export-paste-add"].addEventListener("click", () => addPastedSong("export"));
   for (const id of ["book-title-input", "book-author-input"]) {
     const input = els[id];
     input.addEventListener("input", () => {
