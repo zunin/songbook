@@ -1,14 +1,99 @@
-use super::chord::{chord_tokens, inline_chords, is_chord, merge_chord_line};
+use super::chord::{chord_token_spans, chord_tokens, inline_chords, is_chord, merge_chord_line};
 use super::song::{LineKind, Section, SectionKind, Song};
 use regex::Regex;
 use std::sync::OnceLock;
 
 static SECTION_HEADER_RE: OnceLock<Regex> = OnceLock::new();
+static BRACKET_TAG_RE: OnceLock<Regex> = OnceLock::new();
 static FRETBOARD_RE: OnceLock<Regex> = OnceLock::new();
 static META_RE: OnceLock<Regex> = OnceLock::new();
+static LABEL_SCAN_RE: OnceLock<Regex> = OnceLock::new();
+static LABEL_ONLY_RE: OnceLock<Regex> = OnceLock::new();
+static FINGERING_RE: OnceLock<Regex> = OnceLock::new();
 static URL_RE: OnceLock<Regex> = OnceLock::new();
 static STAR_RE: OnceLock<Regex> = OnceLock::new();
 static NOTE_RE: OnceLock<Regex> = OnceLock::new();
+
+/// Labels recognized in metadata lines (`Song:`, `Key signature:`, `Written by
+/// …`, …). Order matters: the longest spelling of a prefix must come first
+/// (`song name` before `song`) because the alternation is leftmost-first.
+const META_LABELS: &[&str] = &[
+    r"song\s+name",
+    r"artist\s+name",
+    r"key\s+signature",
+    r"tabbed\s+by",
+    r"transcribed\s+by",
+    r"written\s+by",
+    r"music\s+by",
+    r"lyrics\s+by",
+    r"lyric\s+by",
+    r"words\s+by",
+    "song",
+    "title",
+    "artist",
+    "band",
+    "album",
+    "key",
+    "capo",
+    "tuning",
+    "difficulty",
+    "author",
+    "written",
+    "transcribed",
+];
+
+/// Section-ish vocabulary accepted inside a whole-line bracketed tag
+/// (`[Verse 1]`, `[Chorus]`, `[Note]`, `[Chords]`, `[Tab]`, …).
+const BRACKET_TAG_WORDS: &[&str] = &[
+    "instrumental",
+    "interlude",
+    "breakdown",
+    "strumming",
+    "prechorus",
+    "pre-chorus",
+    "pre chorus",
+    "refrain",
+    "chords",
+    "chord",
+    "notes",
+    "note",
+    "intro",
+    "verse",
+    "chorus",
+    "bridge",
+    "solo",
+    "outro",
+    "riff",
+    "break",
+    "coda",
+    "ending",
+    "tuning",
+    "tab",
+    "tabs",
+    "hook",
+    "lead",
+    "tag",
+    "end",
+];
+
+/// Headings that introduce section content but carry no value of their own
+/// (`Chords:`, `Note:`). Whole-line occurrences are noise.
+const CONTENT_LABELS: &[&str] = &[
+    "chords used",
+    "strumming pattern",
+    "chords",
+    "chord",
+    "notes",
+    "note",
+    "lyrics",
+    "lyric",
+    "rhythm",
+    "tabs",
+    "tab",
+    "strumming",
+];
+
+const PROSE_WORD_MIN: usize = 8;
 
 fn section_header_re() -> &'static Regex {
     SECTION_HEADER_RE.get_or_init(|| {
@@ -22,6 +107,43 @@ fn section_header_re() -> &'static Regex {
     })
 }
 
+/// Matches a line that is *entirely* a bracketed section tag: `[Verse 1]`,
+/// `[Chorus]`, `[Note]`, `[Chords]`, …. Case-insensitive; a trailing
+/// number or parenthetical is allowed.
+fn bracket_tag_re() -> &'static Regex {
+    BRACKET_TAG_RE.get_or_init(|| {
+        Regex::new(&format!(
+            r"(?i)^\s*\[\s*({}\b)[^\]]*\]\s*$",
+            BRACKET_TAG_WORDS.join("|")
+        ))
+        .unwrap()
+    })
+}
+
+/// Section name of a whole-line bracketed tag, if the line is one.
+fn bracket_tag_name(line: &str) -> Option<&str> {
+    bracket_tag_re()
+        .captures(line)
+        .and_then(|captures| captures.get(1))
+        .map(|name| name.as_str())
+}
+
+/// Matches a whole-line content label such as `Chords:` or `Note:`.
+fn label_only_re() -> &'static Regex {
+    LABEL_ONLY_RE.get_or_init(|| {
+        Regex::new(&format!(
+            r"(?i)^\s*(?:{})\s*(?::|[-–—])\s*$",
+            CONTENT_LABELS.join("|")
+        ))
+        .unwrap()
+    })
+}
+
+/// Matches the fingering part of a chord definition (`x02220`, `3-2-0-0-0-3`).
+fn fingering_re() -> &'static Regex {
+    FINGERING_RE.get_or_init(|| Regex::new(r"^[xX0-9\-/\\hpbr~()\s]+$").unwrap())
+}
+
 fn fretboard_re() -> &'static Regex {
     FRETBOARD_RE.get_or_init(|| {
         Regex::new(r"(?i)^\s*[A-G]#?\|(?:[-]|[-0-9hbpsl/\\~^xv\(\)\|\s])+\|?\s*$").unwrap()
@@ -30,13 +152,85 @@ fn fretboard_re() -> &'static Regex {
 
 fn meta_re() -> &'static Regex {
     META_RE.get_or_init(|| {
-        Regex::new(concat!(
-            r"(?i)^\s*(song(?:\s+name)?|title|artist(?:\s+name)?|band|",
-            r"key(?:\s+signature)?|capo|tuning|difficulty|author|tabbed\s+by)\b",
-            r"\s*(?::|[-–—])?\s*(.*)$",
+        Regex::new(&format!(
+            r"(?i)^\s*({})\b\s*(?::|[-–—])?\s*(.*)$",
+            META_LABELS.join("|")
         ))
         .unwrap()
     })
+}
+
+/// Matches a known label followed by its delimiter, anywhere in a line. Used
+/// to find the extra labels glued into the value of a run-together line.
+fn label_scan_re() -> &'static Regex {
+    LABEL_SCAN_RE.get_or_init(|| {
+        Regex::new(&format!(r"(?i)({})\s*(?::|[-–—])", META_LABELS.join("|"))).unwrap()
+    })
+}
+
+/// Splits a metadata line into one `(label, value)` part per label occurrence.
+///
+/// Scraped tabs regularly lose the newline between two labelled lines, leaving
+/// a run-together line such as `Tuning: E A D G B EKey: ACapo: No capo`. Every
+/// known label therefore starts a new part, and text glued to the *front* of a
+/// label (the `E` in `… B EKey:`) stays in the previous value — which is what
+/// we want: the tuning value ends where the next label begins.
+fn metadata_parts(line: &str) -> Vec<(&str, &str)> {
+    let text = line.trim();
+    let starts: Vec<usize> = label_scan_re()
+        .find_iter(text)
+        .map(|found| found.start())
+        .collect();
+    // Only lines that *begin* with a label are metadata; anything else (a
+    // lyric line mentioning "key:") stays out of the metadata path.
+    let begins_with_label = starts
+        .first()
+        .is_some_and(|&start| text[..start].trim().is_empty());
+    if !begins_with_label {
+        // A credit such as `Written by X` carries no delimiter, so the line is
+        // one part instead of a run-together line to split.
+        return metadata_part(text).into_iter().collect();
+    }
+    starts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &start)| {
+            let end = starts.get(index + 1).copied().unwrap_or(text.len());
+            metadata_part(text[start..end].trim())
+        })
+        .collect()
+}
+
+/// The `(label, value)` of a single metadata part, if the text is a labelled
+/// line at all.
+fn metadata_part(text: &str) -> Option<(&str, &str)> {
+    let captures = meta_re().captures(text)?;
+    let label = captures.get(1)?.as_str();
+    let value = captures.get(2).map_or("", |value| value.as_str().trim());
+    is_metadata_part(text, label, value).then_some((label, value))
+}
+
+/// A part counts as metadata when a delimiter follows the label (`Key: A`,
+/// `Capo - 2`) or when the label is a multi-word credit (`Written by X`) that
+/// no lyric line would start with. A single bare word (`Key to the highway`)
+/// is a lyric, not metadata.
+fn is_metadata_part(part: &str, label: &str, value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    let after_label = part[label.len()..].trim_start();
+    let explicit = after_label.starts_with([':', '-', '–', '—']);
+    explicit || label.split_whitespace().count() > 1
+}
+
+/// Lower-cases a label and collapses its inner whitespace (`Song  Name` →
+/// `song name`) so both spellings match the same field.
+fn normalize_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn url_re() -> &'static Regex {
@@ -89,9 +283,38 @@ fn section_kind(name: &str) -> SectionKind {
 /// chord-only line immediately above a lyric line is merged into that lyric so
 /// both inline `[Chord]` input and the raw column-aligned chord-over-lyrics
 /// layout produce the same `LineKind::Lyric` representation.
+///
+/// The heuristics are deliberately mechanical:
+///
+/// * A line that is entirely a bracketed tag (`[Verse 1]`, `[Note]`,
+///   `[Chords]`, `[Tab]`) is a section header — never lyric, never ambiguous.
+/// * `ChordName:` groups followed by fingering characters (`F#m:   244222`,
+///   `Bm/A:  x04432`) are chord definitions: noise, not lyric.
+/// * Whole-line content labels (`Chords:`, `Note:`) are noise.
+/// * Known metadata labels (`Song:`, `Artist:`, `Album:`, `Key:`, `Capo:`,
+///   `Tuning:`, `Written by …`, `Transcribed by …`, …) are consumed as
+///   metadata rather than kept as lyric, and a run-together line is split at
+///   every label occurrence (`Tuning: E A D G B EKey: ACapo: No capo`).
+/// * A bare preamble line of `PROSE_WORD_MIN` words or more is a wrapped
+///   performance note, not a title: it is consumed (out of the body) and never
+///   guessed as title or artist. Shorter bare lines stay title/artist
+///   candidates.
+/// * Chord tokens may carry a `*` decoration (`Em*` is `Em` at that column) and
+///   bare repeat counts (`x12`, `4x`) are annotations: never chords, never
+///   lyric, and they leave the merged columns untouched.
+///
+/// Known limitations (accepted, see `docs/adr`):
+///
+/// * A chord-only line with no lyric line below it in its section — an intro
+///   chord before the next section tag — stays a chord-only line.
+/// * Title/artist inference never looks at noise, headers, chord definitions,
+///   chord-only lines, metadata, or wrapped prose, but it is still a guess:
+///   without a `Song:`/`Title:` label the first genuine lyric line is used.
 pub fn parse(raw: &str) -> Song {
     let lines: Vec<&str> = raw.lines().collect();
-    let (mut song, preamble) = analyze_preamble(&lines);
+    let analysis = analyze_preamble(&lines);
+    let mut song = analysis.song;
+    let preamble = analysis.body_start;
 
     let mut current = Section {
         kind: SectionKind::Intro,
@@ -123,9 +346,10 @@ pub fn parse(raw: &str) -> Song {
             }
             LineKind::Lyric(_) | LineKind::Ambiguous(_) => {
                 if let Some(chords) = pending_chords.take() {
+                    let plain = normalize_chord_line(&chords);
                     current
                         .lines
-                        .push(LineKind::Lyric(merge_chord_line(&chords, line)));
+                        .push(LineKind::Lyric(merge_chord_line(&plain, line)));
                 } else {
                     current.lines.push(kind);
                 }
@@ -143,7 +367,47 @@ pub fn parse(raw: &str) -> Song {
     if !current.lines.is_empty() {
         song.sections.push(current);
     }
+    if analysis.skipped_prose && song.title.is_none() {
+        song.title = first_lyric_line(&song.sections);
+    }
     song
+}
+
+/// Fallback title: the first genuine lyric line of the song with its inline
+/// chord markers removed. Used when the preamble held a prose paragraph, which
+/// must never become the title.
+fn first_lyric_line(sections: &[Section]) -> Option<String> {
+    sections
+        .iter()
+        .flat_map(|section| section.lines.iter())
+        .find_map(|line| match line {
+            LineKind::Lyric(text) => {
+                let title = strip_inline_markers(text);
+                (!title.is_empty()).then_some(title)
+            }
+            _ => None,
+        })
+}
+
+/// Removes the `[Chord]` markers of a merged lyric line, leaving any bracketed
+/// text that is not a chord (ad-libs such as `[oh]`) in place.
+fn strip_inline_markers(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some(close_relative) = rest[open..].find(']') else {
+            break;
+        };
+        let close = open + close_relative;
+        let inner = &rest[open + 1..close];
+        out.push_str(&rest[..open]);
+        if !is_chord(inner) {
+            out.push_str(&rest[open..=close]);
+        }
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 fn flush_pending(current: &mut Section, pending: &mut Option<String>) {
@@ -156,7 +420,7 @@ fn flush_pending(current: &mut Section, pending: &mut Option<String>) {
 #[allow(dead_code)]
 pub fn extract_metadata(raw: &str) -> Song {
     let lines: Vec<&str> = raw.lines().collect();
-    analyze_preamble(&lines).0
+    analyze_preamble(&lines).song
 }
 
 /// Number of leading lines `parse` consumes as preamble (metadata, noise, and
@@ -164,7 +428,18 @@ pub fn extract_metadata(raw: &str) -> Song {
 /// duplicating the parser's rules (ADR0014).
 pub fn preamble_len(raw: &str) -> usize {
     let lines: Vec<&str> = raw.lines().collect();
-    analyze_preamble(&lines).1
+    analyze_preamble(&lines).body_start
+}
+
+/// Result of scanning the leading preamble of raw tab text.
+struct Preamble {
+    /// Metadata found (and inferred) in the preamble.
+    song: Song,
+    /// Index of the first line that belongs to the song body.
+    body_start: usize,
+    /// The preamble contained a wrapped prose paragraph that inference had to
+    /// skip, so the title is better taken from the song body.
+    skipped_prose: bool,
 }
 
 /// Tracks whether title/artist were explicitly labelled in the input, so the
@@ -179,21 +454,15 @@ pub struct MetadataProvenance {
 pub fn metadata_provenance(raw: &str) -> MetadataProvenance {
     let mut provenance = MetadataProvenance::default();
     for line in raw.lines() {
-        let Some(captures) = meta_re().captures(line.trim()) else {
-            continue;
-        };
-        let label = captures[1].to_lowercase();
-        let value = captures
-            .get(2)
-            .map(|m| m.as_str().trim())
-            .unwrap_or_default();
-        if value.is_empty() {
-            continue;
-        }
-        match label.as_str() {
-            "song" | "song name" | "title" => provenance.title_labelled = true,
-            "artist" | "artist name" | "band" => provenance.artist_labelled = true,
-            _ => {}
+        for (label, value) in metadata_parts(line.trim()) {
+            if value.is_empty() {
+                continue;
+            }
+            match normalize_label(label).as_str() {
+                "song" | "song name" | "title" => provenance.title_labelled = true,
+                "artist" | "artist name" | "band" => provenance.artist_labelled = true,
+                _ => {}
+            }
         }
     }
     provenance
@@ -218,20 +487,23 @@ pub fn section_kind_from_header(line: &str) -> SectionKind {
 }
 
 /// Extracts labelled metadata and infers missing title/artist from leading bare
-/// header lines. Also returns the index where the song body starts.
+/// header lines. Also reports the index where the song body starts.
 ///
 /// At most the first two bare (unclassified) lines before the first section,
-/// chord, or tab line are treated as title/artist candidates. Candidates are
-/// only consumed for fields that were not explicitly labelled; unused
-/// candidates are left in the body. Scanning stops as soon as anything that can
-/// only belong to the song body is seen, so lyrics after the body has started
-/// are never reclassified.
-fn analyze_preamble(lines: &[&str]) -> (Song, usize) {
+/// chord, or tab line are treated as title/artist candidates; wrapped prose is
+/// consumed instead of being used as one, and when that happens the title falls
+/// back to the first genuine lyric line of the body. Candidates are only
+/// consumed for fields that were not explicitly labelled; unused candidates are
+/// left in the body. Scanning stops as soon as anything that can only belong to
+/// the song body is seen, so lyrics after the body has started are never
+/// reclassified.
+fn analyze_preamble(lines: &[&str]) -> Preamble {
     let mut song = Song::default();
     let mut consumed = vec![false; lines.len()];
     let mut candidates = Vec::new();
     let mut scan_end = 0;
     let mut in_chord_diagram = false;
+    let mut skipped_prose = false;
 
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -254,6 +526,14 @@ fn analyze_preamble(lines: &[&str]) -> (Song, usize) {
         }
         if is_body_start_line(trimmed) {
             break;
+        }
+        // A wrapped prose note is not a title: consume it and remember that
+        // inference has to fall back to the song body.
+        if looks_like_prose(trimmed) {
+            skipped_prose = true;
+            consumed[index] = true;
+            scan_end = index + 1;
+            continue;
         }
         if candidates.len() < 2 {
             candidates.push(index);
@@ -288,56 +568,62 @@ fn analyze_preamble(lines: &[&str]) -> (Song, usize) {
     let body_start = (0..scan_end)
         .find(|&index| !consumed[index])
         .unwrap_or(scan_end);
-    (song, body_start)
+    Preamble {
+        song,
+        body_start,
+        skipped_prose,
+    }
 }
 
 /// True for lines that unambiguously begin the song body rather than a header.
 fn is_body_start_line(line: &str) -> bool {
-    section_header_re().is_match(line)
+    bracket_tag_name(line).is_some()
+        || section_header_re().is_match(line)
         || fretboard_re().is_match(line)
         || is_chord_only_line(line)
         || !inline_chords(line).is_empty()
 }
 
 fn is_metadata_line(line: &str) -> bool {
-    meta_re().is_match(line)
+    metadata_parts(line)
+        .iter()
+        .any(|(_, value)| !value.is_empty())
 }
 
 /// Applies an explicitly labelled metadata line (`Song:`, `Artist:`, `Key:`,
 /// `Capo:`, `Tuning:`, …) to the song. Returns true if the line was consumed.
+///
+/// A run-together line is applied part by part, so `Tuning: …Key: ACapo: No
+/// capo` fills all three fields.
 fn apply_metadata_line(song: &mut Song, line: &str) -> bool {
-    let Some(captures) = meta_re().captures(line) else {
-        return false;
-    };
-    let label = captures[1].to_lowercase();
-    let value = captures
-        .get(2)
-        .map(|m| m.as_str().trim())
-        .unwrap_or_default();
-
-    match label.as_str() {
-        "song" | "song name" | "title" => {
-            if !value.is_empty() {
-                song.title = Some(value.to_string());
+    let parts = metadata_parts(line);
+    let mut applied = false;
+    for (label, value) in parts {
+        applied = true;
+        match normalize_label(label).as_str() {
+            "song" | "song name" | "title" => {
+                if !value.is_empty() {
+                    song.title = Some(value.to_string());
+                }
             }
-        }
-        "artist" | "artist name" | "band" => {
-            if !value.is_empty() {
-                song.artist = Some(value.to_string());
+            "artist" | "artist name" | "band" => {
+                if !value.is_empty() {
+                    song.artist = Some(value.to_string());
+                }
             }
-        }
-        "key" | "key signature" => song.key = normalize_key(value),
-        "capo" => song.capo = normalize_capo(value),
-        "tuning" => {
-            if !value.is_empty() {
-                song.tuning = Some(value.to_string());
+            "key" | "key signature" => song.key = normalize_key(value),
+            "capo" => song.capo = normalize_capo(value),
+            "tuning" => {
+                if !value.is_empty() {
+                    song.tuning = Some(value.to_string());
+                }
             }
+            // Album/written-by/transcribed-by/difficulty/author/tabbed-by are
+            // preamble metadata we consume but do not render.
+            _ => {}
         }
-        // Difficulty/author/tabbed-by are preamble metadata we consume but
-        // do not render.
-        _ => {}
     }
-    true
+    applied
 }
 
 fn normalize_key(value: &str) -> Option<String> {
@@ -372,6 +658,9 @@ pub fn classify_line(line: &str) -> LineKind {
     if line.is_empty() {
         return LineKind::Blank;
     }
+    if let Some(name) = bracket_tag_name(line) {
+        return LineKind::SectionHeader(section_kind(name), line.to_string());
+    }
     if section_header_re().is_match(line) {
         let name = section_header_re()
             .captures(line)
@@ -396,16 +685,21 @@ pub fn classify_line(line: &str) -> LineKind {
     if is_tuning_line(line) {
         return LineKind::Noise(line.to_string());
     }
+    // `F#m:   244222` is a chord definition (noise), not a chord line.
+    if is_chord_definition_line(line) {
+        return LineKind::Noise(line.to_string());
+    }
     if is_chord_only_line(line) {
         return LineKind::ChordOnly(line.to_string());
     }
-    if is_noise(line) {
+    if is_noise(line) || is_repeat_only_line(line) {
         return LineKind::Noise(line.to_string());
     }
     LineKind::Ambiguous(line.to_string())
 }
 
-/// A line consisting only of chord tokens (optionally with repeat counts like `2x`).
+/// A line consisting only of chord tokens (optionally decorated like `Em*` and
+/// with repeat counts like `2x`).
 fn is_chord_only_line(line: &str) -> bool {
     let tokens = chord_tokens(line);
     if tokens.is_empty() {
@@ -413,13 +707,85 @@ fn is_chord_only_line(line: &str) -> bool {
     }
     let mut any_chord = false;
     for token in &tokens {
-        if is_chord(&token.text) {
+        if is_chord(chord_shape(&token.text)) {
             any_chord = true;
         } else if !is_repeat(&token.text) {
             return false;
         }
     }
     any_chord
+}
+
+/// The bare chord name of a token: a `*` decoration marks a fingering variant
+/// (`Em*` is played as `Em`), so it is dropped for classification and merging.
+fn chord_shape(token: &str) -> &str {
+    token.trim_end_matches('*')
+}
+
+/// Rewrites a decorated chord line into the plain, column-aligned form the
+/// chord merger expects: `*` decorations are dropped (`Em*` stays at its own
+/// column) and repeat counts such as `x12` are blanked out with spaces so they
+/// annotate without disturbing any chord's column.
+fn normalize_chord_line(line: &str) -> String {
+    let mut out = line.to_string();
+    for span in chord_token_spans(line).into_iter().rev() {
+        if is_chord(chord_shape(&span.token.text)) {
+            continue;
+        }
+        let blank = " ".repeat(span.token.text.chars().count());
+        out.replace_range(span.text_start..span.text_end, &blank);
+    }
+    out
+}
+
+/// A chord-definition line: one or more `ChordName:` groups whose values are
+/// fingering characters only (`F#m:   244222`, `Bm/A:  x04432`, or several
+/// definitions on one line). Noise — the fingering is not meant to be sung.
+fn is_chord_definition_line(line: &str) -> bool {
+    let mut parts = line.trim().split(':');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    if !is_chord(chord_shape(first.trim())) {
+        return false;
+    }
+    let mut rest: Vec<&str> = parts.collect();
+    let Some(last) = rest.pop() else {
+        return false;
+    };
+    for middle in rest {
+        // A middle part is the previous fingering plus the next chord name.
+        let Some((fingering, name)) = middle.rsplit_once(char::is_whitespace) else {
+            return false;
+        };
+        if !is_fingering(fingering) || !is_chord(chord_shape(name.trim())) {
+            return false;
+        }
+    }
+    is_fingering(last)
+}
+
+/// Fingering text of a chord definition: string/ fret symbols, digits and
+/// separators, with at least one fret number or muted-string marker.
+fn is_fingering(text: &str) -> bool {
+    let text = text.trim();
+    fingering_re().is_match(text) && text.chars().any(|ch| matches!(ch, 'x' | 'X' | '0'..='9'))
+}
+
+/// A line made only of repeat counts (`x4`, `2x`): an annotation for the chord
+/// line above it, so never a chord and never a lyric.
+fn is_repeat_only_line(line: &str) -> bool {
+    let tokens = chord_tokens(line);
+    !tokens.is_empty() && tokens.iter().all(|token| is_repeat(&token.text))
+}
+
+/// A bare preamble line long enough to be a wrapped performance note rather
+/// than a title: `PROSE_WORD_MIN` or more words. A verse written in
+/// chord-over-lyrics layout alternates a chord line with a lyric line, and the
+/// preamble scan stops at the first chord line, so only notes reach this
+/// length. Used only to keep notes out of title/artist inference.
+fn looks_like_prose(line: &str) -> bool {
+    line.split_whitespace().count() >= PROSE_WORD_MIN
 }
 
 fn is_repeat(token: &str) -> bool {
@@ -440,6 +806,11 @@ fn is_noise(line: &str) -> bool {
         return true;
     }
     if is_tuning_line(line) {
+        return true;
+    }
+    // Labelled metadata, whole-line content labels (`Chords:`) and chord
+    // definitions (`F#m:   244222`) are preamble content, not lyric.
+    if is_metadata_line(line) || label_only_re().is_match(line) || is_chord_definition_line(line) {
         return true;
     }
     let lower = line.to_lowercase();
@@ -529,6 +900,20 @@ fn is_punctuation_only(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Name of a line's classification, so tables can assert kinds without
+    /// spelling out every `LineKind` payload.
+    fn kind_name(line: &str) -> &'static str {
+        match classify_line(line) {
+            LineKind::Lyric(_) => "lyric",
+            LineKind::ChordOnly(_) => "chord-only",
+            LineKind::SectionHeader(_, _) => "section header",
+            LineKind::Fretboard(_) => "fretboard",
+            LineKind::Noise(_) => "noise",
+            LineKind::Blank => "blank",
+            LineKind::Ambiguous(_) => "ambiguous",
+        }
+    }
 
     #[test]
     fn classifies_section_headers() {
@@ -852,5 +1237,326 @@ Let it be, let it be, let it be, let it be";
             section_kind_from_header("mystery line"),
             SectionKind::Other("mystery line".into())
         );
+    }
+
+    // --- real-world tab formats (heuristic refinement) -----
+
+    /// Whole-line bracketed tags are section headers, never lyric and never
+    /// ambiguous, whatever the section vocabulary word is.
+    #[test]
+    fn bracketed_tags_are_section_headers() {
+        for (line, kind) in [
+            ("[Intro]", SectionKind::Intro),
+            ("[Verse 1]", SectionKind::Verse),
+            ("[verse 2]", SectionKind::Verse),
+            ("[Pre-Chorus]", SectionKind::PreChorus),
+            ("[Prechorus]", SectionKind::PreChorus),
+            ("[Chorus]", SectionKind::Chorus),
+            ("[Bridge]", SectionKind::Bridge),
+            ("[Solo]", SectionKind::Solo),
+            ("[Instrumental]", SectionKind::Instrumental),
+            ("[Interlude]", SectionKind::Interlude),
+            ("[Outro]", SectionKind::Outro),
+            ("[Note]", SectionKind::Other("note".into())),
+            ("[notes]", SectionKind::Other("notes".into())),
+            ("[Chords]", SectionKind::Other("chords".into())),
+            ("[ Tab ]", SectionKind::Other("tab".into())),
+            ("[Ending]", SectionKind::Other("ending".into())),
+        ] {
+            assert_eq!(
+                classify_line(line),
+                LineKind::SectionHeader(kind, line.into()),
+                "expected {line:?} to be a section header"
+            );
+        }
+    }
+
+    /// A bracketed tag opens a section; bracketed text that is not a tag stays
+    /// an ad-lib, and parenthetical ad-libs are still kept as lyric.
+    #[test]
+    fn bracketed_ad_libs_stay_lyric() {
+        for line in [
+            "[oh]",
+            "(Hysterical and)",
+            "(One day I am gonna grow wings)",
+        ] {
+            assert_eq!(kind_name(line), "ambiguous", "{line:?}");
+        }
+        assert_eq!(kind_name("[Am]Hello"), "lyric");
+    }
+
+    /// Regression: a chord-only line with no lyric under it in its section stays
+    /// chord-only (documented limitation in `parse`).
+    #[test]
+    fn orphan_intro_chords_stay_chord_only() {
+        let song = parse("[Intro]\nAm  F  C  G\n\n[Verse]\n[Am]Hello");
+        assert_eq!(
+            song.sections[0].lines,
+            vec![LineKind::ChordOnly("Am  F  C  G".into())]
+        );
+        assert_eq!(
+            song.sections[1].lines,
+            vec![LineKind::Lyric("[Am]Hello".into())]
+        );
+    }
+
+    #[test]
+    fn chord_definition_lines_are_noise() {
+        for line in [
+            "F#m:   244222",
+            "Gmaj7: 320002",
+            "Bm/A:  x04432",
+            "A: x02220",
+            "E: 022100 A: x02220",
+            "Cadd9: x32030",
+        ] {
+            assert_eq!(
+                kind_name(line),
+                "noise",
+                "expected {line:?} to be noise, got {:?}",
+                classify_line(line)
+            );
+        }
+    }
+
+    /// Chord definitions are noise, so they never leak into the song body.
+    #[test]
+    fn chord_definitions_are_dropped_from_the_body() {
+        let song = parse("[Chords]\nF#m:   244222\nGmaj7: 320002\n\n[Verse]\n[Am]Hello");
+        assert_eq!(song.sections.len(), 1);
+        assert_eq!(
+            song.sections[0].lines,
+            vec![LineKind::Lyric("[Am]Hello".into())]
+        );
+    }
+
+    #[test]
+    fn standalone_content_labels_are_noise() {
+        for line in ["Chords:", "Note:", "Notes:", "Tab:", "Strumming pattern:"] {
+            assert_eq!(kind_name(line), "noise", "expected {line:?} to be noise");
+        }
+    }
+
+    #[test]
+    fn extra_metadata_labels_are_metadata_not_lyric() {
+        for line in [
+            "Album: Demo Record",
+            "Written by A. Writer",
+            "Transcribed by B. Scribe",
+            "Music by C. Composer",
+            "Lyrics by D. Poet",
+        ] {
+            assert_eq!(kind_name(line), "noise", "expected {line:?} to be noise");
+        }
+        let song = parse("Album: Demo Record\nWritten by A. Writer\n\n[Verse]\n[Am]Hello");
+        assert_eq!(song.title, None);
+        assert_eq!(song.artist, None);
+        assert_eq!(song.sections.len(), 1);
+    }
+
+    #[test]
+    fn labelled_metadata_fields_still_win() {
+        let song = extract_metadata(
+            "Song: Demo\nArtist: Demo Band\nAlbum: Demo Record\nKey: G\nCapo: 3rd fret\nTuning: D A D G B E\n",
+        );
+        assert_eq!(song.title.as_deref(), Some("Demo"));
+        assert_eq!(song.artist.as_deref(), Some("Demo Band"));
+        assert_eq!(song.key.as_deref(), Some("G"));
+        assert_eq!(song.capo.as_deref(), Some("3"));
+        assert_eq!(song.tuning.as_deref(), Some("D A D G B E"));
+    }
+
+    /// Scraped tabs lose the newline between labelled lines; the glued label
+    /// starts a new field and the glue stays in the previous value.
+    #[test]
+    fn run_together_metadata_lines_are_split() {
+        let song = extract_metadata("Tuning: E A D G B EKey: ACapo: No capo\n");
+        assert_eq!(song.tuning.as_deref(), Some("E A D G B E"));
+        assert_eq!(song.key.as_deref(), Some("A"));
+        assert_eq!(song.capo, None);
+
+        let song = extract_metadata("Song: Demo TitleArtist: Demo Artist\n");
+        assert_eq!(song.title.as_deref(), Some("Demo Title"));
+        assert_eq!(song.artist.as_deref(), Some("Demo Artist"));
+
+        let song = extract_metadata("Tuning: E A D G B EKey: BmCapo: No capo\n");
+        assert_eq!(song.tuning.as_deref(), Some("E A D G B E"));
+        assert_eq!(song.key.as_deref(), Some("Bm"));
+        assert_eq!(song.capo, None);
+    }
+
+    #[test]
+    fn run_together_labels_count_as_labelled() {
+        let provenance = metadata_provenance("Song: Demo TitleArtist: Demo Artist\n[Verse]\nHello");
+        assert!(provenance.title_labelled);
+        assert!(provenance.artist_labelled);
+    }
+
+    /// A single bare label word without a delimiter is a lyric, not metadata.
+    #[test]
+    fn bare_label_words_are_not_metadata() {
+        assert_eq!(kind_name("Key to the highway"), "ambiguous");
+        assert_eq!(kind_name("Band of horses played"), "ambiguous");
+    }
+
+    #[test]
+    fn decorated_chord_lines_are_chord_only() {
+        for line in [
+            "Em         Em*  x12",
+            "Am Bm Em        x4",
+            "Em*",
+            "G  2x",
+            "Em  Em*",
+        ] {
+            assert_eq!(
+                kind_name(line),
+                "chord-only",
+                "expected {line:?} to be chord-only"
+            );
+        }
+    }
+
+    /// A bare repeat count is an annotation: never a chord-only line, never
+    /// a lyric.
+    #[test]
+    fn standalone_repeat_counts_are_noise() {
+        for line in ["x4", "2x", "x12", "12x"] {
+            assert_eq!(kind_name(line), "noise", "expected {line:?} to be noise");
+        }
+    }
+
+    /// Decorated chords merge at their own column and repeat counts leave the
+    /// surrounding columns alone.
+    #[test]
+    fn decorated_chords_merge_at_their_columns() {
+        for (chords, lyric, expected) in [
+            (
+                "Em         Em*  x12",
+                "lyric line here",
+                "[Em]lyric line [Em]here",
+            ),
+            ("Am Bm Em        x4", "xy zw uv", "[Am]xy [Bm]zw [Em]uv"),
+            ("Am  2x  F", "hello world foo", "[Am]hello wo[F]rld foo"),
+            ("Em*", "abc", "[Em]abc"),
+        ] {
+            let raw = format!("[Verse]\n{chords}\n{lyric}\n");
+            let song = parse(&raw);
+            assert_eq!(
+                song.sections[0].lines[0],
+                LineKind::Lyric(expected.into()),
+                "merging {chords:?} over {lyric:?}"
+            );
+        }
+    }
+
+    /// Inference skips noise, headers, chord definitions, chord-only lines,
+    /// metadata and wrapped prose: a note paragraph is never the title.
+    #[test]
+    fn title_inference_skips_prose_notes() {
+        let raw = "\
+Tuning: E A D G B EKey: DCapo: No capo
+
+The strumming pattern written out here is only a suggestion for beginners.
+[Intro]
+D  A
+
+[Verse 1]
+[D]Alpha beta gamma
+";
+        let song = parse(raw);
+        assert_eq!(song.title.as_deref(), Some("Alpha beta gamma"));
+        assert_eq!(song.artist, None);
+        assert_eq!(song.key.as_deref(), Some("D"));
+        assert_eq!(song.tuning.as_deref(), Some("E A D G B E"));
+        // The note paragraph is consumed, and the intro chord with no lyric
+        // under it stays chord-only (known limitation).
+        assert_eq!(song.sections.len(), 2);
+        assert_eq!(
+            song.sections[0].lines,
+            vec![LineKind::ChordOnly("D  A".into())]
+        );
+        assert_eq!(
+            song.sections[1].lines,
+            vec![LineKind::Lyric("[D]Alpha beta gamma".into())]
+        );
+    }
+
+    /// Regression: with no skipped prose paragraph, the body is not mined for
+    /// a title, so a clean tab still needs no guesses.
+    #[test]
+    fn no_title_guess_without_prose() {
+        assert_eq!(parse("[Verse]\n[Am]Hello there").title, None);
+    }
+
+    /// Regression table: every line the earlier tests classified must keep
+    /// its old kind.
+    #[test]
+    fn regression_preexisting_inputs_classify_as_before() {
+        for (line, expected) in [
+            // classifies_section_headers / section_kind_from_header
+            ("[Verse 1]", "section header"),
+            ("[Chorus]", "section header"),
+            ("[Pre-Chorus]", "section header"),
+            ("*Bridge*", "section header"),
+            ("Intro:", "section header"),
+            ("Guitar Solo", "section header"),
+            ("[Riff]", "section header"),
+            // classifies_fretboard
+            ("e|---3---3---|", "fretboard"),
+            ("B|-1---0---|", "fretboard"),
+            ("E|----------- ------3-|", "fretboard"),
+            // classifies_chord_only
+            ("Am  Fmaj7  C/G", "chord-only"),
+            ("Am  F  C  G  2x", "chord-only"),
+            ("| Am | F | C |", "chord-only"),
+            ("(Am)  F,  C  2x", "chord-only"),
+            ("C G Am F", "chord-only"),
+            // classifies_noise
+            ("Tabbed by: someone", "noise"),
+            ("https://www.ultimate-guitar.com/tab/x", "noise"),
+            ("Submit corrections", "noise"),
+            ("Upgrade to Pro", "noise"),
+            ("Go ad-free with Ultimate Guitar", "noise"),
+            ("4.5 stars out of 5", "noise"),
+            ("★★★★☆", "noise"),
+            ("Difficulty: Expert", "noise"),
+            ("Author: someone", "noise"),
+            ("Tuning: Standard (E A D G B E)", "noise"),
+            ("Standard (E A D G B E)", "noise"),
+            ("Drop D", "noise"),
+            ("E A D G B E", "noise"),
+            ("---", "noise"),
+            ("...", "noise"),
+            ("Chords used:", "noise"),
+            // classifies_inline_chord_lyrics / plain_text_is_ambiguous
+            ("[Am]Let it [F]be, let it [C]be", "lyric"),
+            ("[Hm]Not really a chord", "ambiguous"),
+            ("some line the classifier won't know", "ambiguous"),
+            // preamble candidates and bare body lines stay ambiguous
+            ("Let It Be", "ambiguous"),
+            ("The Beatles", "ambiguous"),
+            ("Hey Jude", "ambiguous"),
+            ("Na na na", "ambiguous"),
+            ("Hello", "ambiguous"),
+            ("Some Bare Line", "ambiguous"),
+            ("mystery one", "ambiguous"),
+            ("mystery line", "ambiguous"),
+            ("Another lyric line", "ambiguous"),
+            ("", "blank"),
+        ] {
+            assert_eq!(kind_name(line), expected, "regression on {line:?}");
+        }
+    }
+
+    /// The two bracketed-tag classifications that changed: `[Note]`
+    /// and `[Chords]` were ambiguous before and are section headers now.
+    #[test]
+    fn classification_changes_are_bracketed_tags_only() {
+        for line in ["[Note]", "[Chords]", "[Tab]", "[Notes]"] {
+            assert_eq!(kind_name(line), "section header");
+        }
+        for line in ["Bm/A:  x04432", "F#m:   244222", "Chords:", "Album: X"] {
+            assert_eq!(kind_name(line), "noise");
+        }
     }
 }
