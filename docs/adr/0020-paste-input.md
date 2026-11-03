@@ -10,7 +10,10 @@ The browser app accepts pasted tab text through a labelled textarea on the
 load screen ("Use pasted text"), which starts the same single-song flow as
 dropping one file. In book mode, pasted songs can join a book: the book's
 sources are entries that are either a file or pasted text, triaged in order
-like any other song. The terminal UI stays file-based. URL fetching remains
+like any other song. **A book can also be started from pasted text alone
+("Start a book"), and files can be added afterwards from the book-details
+screen — books are mixed sources in both directions** (adopted 2026-11-03).
+The terminal UI stays file-based. URL fetching remains
 excluded (ADR0005). This decision supersedes ADR0005's interactive-paste
 clause only.
 
