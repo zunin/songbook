@@ -612,7 +612,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
 name = "songbook"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -623,7 +623,7 @@ dependencies = [
 
 [[package]]
 name = "songbook-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "regex",
@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "songbook-wasm"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",

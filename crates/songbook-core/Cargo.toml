@@ -1,6 +1,6 @@
 [package]
 name = "songbook-core"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Reusable parsing, rendering, audit, triage, and preview models for songbook"
 
