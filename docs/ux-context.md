@@ -64,6 +64,19 @@ persistence by design (ADR0016): closing the tab discards the session.
 - Orphan intro chords render as chord-only blocks (documented).
 - No rich source editor in books (reorder/remove = start over).
 - The TUI remains file-based (no paste).
+- **TUI line editing is append-only** (closed decision, 2026-11-03): no cursor
+  movement or mid-line insert/delete in the terminal editor; the edit legend
+  says so, and mid-line edits belong to the web's inline editor.
+
+## Interaction conventions (closed model, 2026-11-03)
+
+- **Focus model (web triage)**: the line list keeps keyboard focus when it had
+  it (the cursor-follows-verdict feedback); the actions group keeps focus when
+  the user moved there (announcements carry the new line instead); entering the
+  screen pulls focus to the current row once. No further focus redesign.
+- **Markers vs labels**: markers say what still needs attention; labels say
+  what a line is; provenance is muted and only on disagreement (see above).
+- **Vocabulary**: one lowercase set across web, TUI, core, and screen readers.
 
 ## Where things live
 
