@@ -219,6 +219,13 @@ button.primary kbd {
 #book-banner { margin-bottom: 1rem; }
 #book-export-failed p { margin: 0.25rem 0; }
 
+/* Per-song status on the book-details screen (F8): the marker glyphs carry
+   the state (✓ done, ▸ current, · pending, × skipped) — not color alone. */
+.book-songs {
+  margin: 0.25rem 0 0.75rem;
+  padding-left: 1.25rem;
+}
+
 #triage-list {
   margin: 0;
   padding: 0;

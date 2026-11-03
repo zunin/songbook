@@ -16,6 +16,12 @@ const state = {
   // ({ kind: "file", file, name, … }) or pasted tab text held in `text`
   // ({ kind: "paste", text, name, … }).
   book: null,
+  // What #triage-live last said for the current session (F11): the position,
+  // the current line's status, and the pending count. The delta against it
+  // decides the next announcement — unchanged info is never re-announced,
+  // and a new song's first render starts fresh instead of comparing against
+  // the previous song's counts.
+  announced: null,
 };
 
 const els = {};
@@ -28,8 +34,9 @@ function initEls() {
   for (const id of [
     "load-screen", "metadata-screen", "triage-screen", "preview-screen",
     "drop-zone", "file-input", "file-error",
-    "paste-input", "paste-use", "paste-error",
+    "paste-input", "paste-use", "paste-book", "paste-error",
     "book-paste-input", "book-paste-add", "book-paste-error",
+    "book-file-input", "book-song-list",
     "export-paste-input", "export-paste-add", "export-paste-error",
     "metadata-form", "metadata-continue", "metadata-error",
     "triage-status", "triage-live", "triage-list", "start-over",
@@ -74,10 +81,15 @@ function announce(text) {
   els["triage-live"].textContent = text;
 }
 
+// Unresolved lines: the same count the visual status bar reports. Pending
+// flags are the flagged subset; "pending" here is every undecided line.
+function countPending(snapshot) {
+  return snapshot.lines.filter((line) => line.status === "pending").length;
+}
+
 function statusText(snapshot) {
-  const pending = snapshot.lines.filter((l) => l.status === "pending").length;
   return `${snapshot.lineCount} lines · ${snapshot.flagCount} flagged · ` +
-    `${pending} pending · line ${snapshot.position + 1} current`;
+    `${countPending(snapshot)} pending · line ${snapshot.position + 1} current`;
 }
 
 function markerFor(line) {
@@ -253,7 +265,7 @@ function renderTriageList(snapshot, wasEditing) {
   // lived in the list (the rebuild destroyed it), when this screen just took
   // over (the previous screen's focus died with it), or when edit mode just
   // opened (the input must own focus to be typed into). Otherwise keep
-  // focus where it is and announce the new current line instead.
+  // focus where it is and let announceTriageChange carry the change.
   const focusInList = list.contains(document.activeElement);
   const focusOnScreen = els["triage-screen"].contains(document.activeElement);
   const enteringEdit = snapshot.editing && !wasEditing;
@@ -317,24 +329,51 @@ function renderTriageList(snapshot, wasEditing) {
   const target = current &&
     (current.querySelector(".line-edit-input") ??
       current.querySelector(".line-select"));
-  if (target && (focusInList || !focusOnScreen || enteringEdit) &&
-      document.activeElement !== target) {
+  const pullFocus = Boolean(target) &&
+    (focusInList || !focusOnScreen || enteringEdit);
+  if (pullFocus && document.activeElement !== target) {
     target.focus();
   }
-  if (focusOnScreen && !focusInList && !enteringEdit) {
-    announceCurrentLine(snapshot);
-  }
-  els["triage-status"].textContent = statusText(snapshot);
+  announceTriageChange(snapshot, pullFocus);
 }
 
-// The spoken counterpart of the focus pull (UX review F2): when focus stays
-// outside the list, the screen reader still learns where the cursor went —
-// kept short and change-focused, in the one lowercase vocabulary.
-function announceCurrentLine(snapshot) {
+// F11: one SHORT, change-focused message per action in #triage-live, built
+// from what actually changed since this session's last triage render — the
+// visual status bar (#triage-status) is plain text now and is never
+// announced. The parts, in speech order:
+// - the session's own message ("Undone.", "No more flagged lines."): the
+//   feedback for actions that changed nothing else,
+// - the line the cursor is on now ("Line 12, lyric, kept") — skipped when
+//   the focus pull (F2) already made the screen reader read that row, and
+//   skipped when neither the position nor the current line's status changed,
+//   so a no-op never re-announces,
+// - "N pending left" when a verdict (or undo) changed the pending count.
+function announceTriageChange(snapshot, pullFocus) {
   const line = snapshot.lines[snapshot.position];
-  if (!line) return;
-  announce(`Line ${snapshot.position + 1}, ${line.effectiveLabel}, ` +
-    `${line.status}: ${line.edited ? line.text : line.original}`);
+  const pending = countPending(snapshot);
+  const fresh = state.announced !== null &&
+    state.announced.session === state.session;
+  const lineChanged = !fresh ||
+    state.announced.position !== snapshot.position ||
+    state.announced.status !== (line ? line.status : null);
+  const countChanged = fresh && state.announced.pending !== pending;
+  state.announced = {
+    session: state.session,
+    position: snapshot.position,
+    status: line ? line.status : null,
+    pending,
+  };
+  const parts = [];
+  if (snapshot.message) parts.push(snapshot.message);
+  if (!pullFocus && lineChanged && line) {
+    let lineText = `Line ${snapshot.position + 1}, ${line.effectiveLabel}, ` +
+      `${line.status}`;
+    if (countChanged) lineText += `, ${pending} pending left`;
+    parts.push(lineText);
+  } else if (countChanged) {
+    parts.push(`${pending} pending left`);
+  }
+  if (parts.length > 0) announce(parts.join(" "));
 }
 
 function buildEditInput(line) {
@@ -430,6 +469,16 @@ function renderPreviewPhase(snapshot) {
     const div = document.createElement("div");
     div.className = `row-${row.style}`;
     div.textContent = row.text === "" ? " " : row.text;
+    // F12: the "Metadata"/"Sections" banner rows and the song's section rows
+    // read as a heading outline for assistive tech; the metadata field rows
+    // stay plain text.
+    if (row.style === "header") {
+      div.setAttribute("role", "heading");
+      div.setAttribute("aria-level", "2");
+    } else if (row.style === "section") {
+      div.setAttribute("role", "heading");
+      div.setAttribute("aria-level", "3");
+    }
     container.append(div);
   }
   container.scrollTop = Array.from(container.children)
@@ -527,16 +576,15 @@ function refresh() {
 // existing session screens, composed into one book by core's `composeBook`.
 // Each entry is a source (ADR0020): either a chosen file or pasted tab text
 // kept in `entry.text` (memory only, P3). `results` order is add order —
-// the initially chosen files in selection order, then each pasted song in
-// the order it was added — and that one array order is the triage order and
-// the book part order alike. Failed sources are marked, reported, and
-// excluded — never dropped silently.
+// sources in the order they were added, files in selection order — and that
+// one array order is the triage order and the book part order alike. Failed
+// sources are marked, reported, and excluded — never dropped silently.
 
-function startBook(files) {
-  state.book = {
-    results: files.map((file) => (
-      { kind: "file", file, text: null, name: file.name,
-        session: null, error: null, loading: false })),
+// The book state shape: sources in add order (triage order and book part
+// order alike), plus the title/author fields and the navigation epoch.
+function newBook(results) {
+  return {
+    results,
     current: -1,
     title: "",
     author: "",
@@ -545,6 +593,44 @@ function startBook(files) {
     // they have moved to another book screen.
     nav: 0,
   };
+}
+
+// A book source (ADR0020) is either a chosen file or pasted tab text held in
+// `text`. Only the raw source is stored; a session is created when triage
+// reaches the entry, so a source the engine cannot use fails there, with the
+// same per-entry report either way.
+function fileEntry(file) {
+  return { kind: "file", file, text: null, name: file.name,
+    session: null, error: null, loading: false };
+}
+
+function pasteEntry(text, name) {
+  return { kind: "paste", file: null, text, name,
+    session: null, error: null, loading: false };
+}
+
+function startBook(files) {
+  state.book = newBook(files.map(fileEntry));
+  showBookForm();
+}
+
+// F7: a book can start from pasted text alone. The paste becomes the book's
+// first pasted source and the flow continues on the book-details screen,
+// where more pasted songs (and files) can be added before Start triage.
+// Only the empty-text check happens here, as on the single-song path; text
+// the engine cannot use fails per entry when triage reaches it, like any
+// other book source.
+function startBookFromPaste() {
+  const raw = els["paste-input"].value;
+  if (raw.trim().length === 0) {
+    els["paste-error"].textContent =
+      "Paste some tab text first, or choose a file above.";
+    return;
+  }
+  state.book = newBook([]);
+  state.book.results.push(pasteEntry(raw, nextPasteName(state.book)));
+  els["paste-input"].value = "";
+  els["paste-error"].textContent = "";
   showBookForm();
 }
 
@@ -586,32 +672,87 @@ function addPastedSong(screen) {
     error.textContent = "Paste some tab text first.";
     return;
   }
-  book.results.push({
-    kind: "paste", file: null, text: raw, name: nextPasteName(book),
-    session: null, error: null, loading: false,
-  });
+  book.results.push(pasteEntry(raw, nextPasteName(book)));
   input.value = "";
   error.textContent = "";
   if (screen === "form") {
     els["book-form-status"].textContent = bookFormStatusText(book);
+    renderBookSongList(book);
     input.focus();
   } else {
     bookForward(); // triage the appended song right away
   }
 }
 
+// F7: files can join a book after a paste-only start, so books can be mixed
+// in either direction. These are the same file sources the load screen
+// creates; unsupported or unreadable files fail per entry when triage
+// reaches them, exactly as for files chosen there.
+function addBookFiles() {
+  const book = state.book;
+  const files = Array.from(els["book-file-input"].files ?? []);
+  if (!book || files.length === 0) return;
+  for (const file of files) book.results.push(fileEntry(file));
+  els["book-file-input"].value = "";
+  els["book-form-status"].textContent = bookFormStatusText(book);
+  renderBookSongList(book);
+}
+
 function showBookForm() {
   const book = state.book;
   if (!book) return;
   book.nav += 1;
-  // The form sits "before" every song: going back to it and pressing
-  // Start triage must resume at the first song, not skip it.
+  // The form sits "before" every song. Start triage recomputes where to
+  // resume — the first unfinished song (F8) — so the cursor just parks at
+  // -1 here.
   book.current = -1;
   els["book-title-input"].value = book.title;
   els["book-author-input"].value = book.author;
   showScreen("book-form-screen");
   els["book-form-status"].textContent = bookFormStatusText(book);
+  renderBookSongList(book);
   els["book-title-input"].focus();
+}
+
+// The first source that still needs triage (F8): failed sources are skipped
+// exactly like bookForward skips them, and a source counts as completed only
+// when its session has nothing pending — a session exists for every song
+// triage has reached, so "has a session" alone cannot tell done from
+// in-progress, and neither can the phase (accept-rest and preview both leave
+// pending lines behind). -1 when every source is done or failed.
+function bookResumeIndex(book) {
+  for (let i = 0; i < book.results.length; i += 1) {
+    const entry = book.results[i];
+    if (entry.error) continue;
+    if (entryUnfinished(entry)) return i;
+  }
+  return -1;
+}
+
+// A source is unfinished when triage never reached it (no session) or its
+// session still has pending lines.
+function entryUnfinished(entry) {
+  return !entry.session ||
+    entry.session.snapshot().lines.some((line) => line.status === "pending");
+}
+
+// Per-song status on the book-details screen (F8): ✓ done, ▸ current (where
+// Start triage resumes), · pending, × skipped. Read-only — navigation stays
+// in the triage screens' Back/Next flow.
+function renderBookSongList(book) {
+  const list = els["book-song-list"];
+  const resume = bookResumeIndex(book);
+  list.textContent = "";
+  book.results.forEach((entry, index) => {
+    const item = document.createElement("li");
+    let mark;
+    if (entry.error) mark = "× skipped";
+    else if (entryUnfinished(entry)) {
+      mark = index === resume ? "▸ current" : "· pending";
+    } else mark = "✓ done";
+    item.textContent = `${mark} — ${entry.name}`;
+    list.append(item);
+  });
 }
 
 function startBookTriage() {
@@ -620,6 +761,12 @@ function startBookTriage() {
   // Raw strings: composeBook does the LaTeX escaping in core.
   book.title = els["book-title-input"].value;
   book.author = els["book-author-input"].value;
+  // Resume where the user left off (F8): the first source that is neither
+  // completed (session with nothing pending) nor failed — not always song 1.
+  // bookForward walks from current + 1, so park just before it; with every
+  // source done or failed (-1) it goes straight to book export.
+  const resume = bookResumeIndex(book);
+  book.current = resume === -1 ? book.results.length - 1 : resume - 1;
   bookForward();
 }
 
@@ -1000,6 +1147,7 @@ function startOver() {
   state.fileName = "";
   state.editing = false;
   state.book = null;
+  state.announced = null;
   els["metadata-form"].textContent = "";
   els["file-input"].value = "";
   els["file-error"].textContent = "";
@@ -1007,6 +1155,7 @@ function startOver() {
   els["paste-error"].textContent = "";
   els["book-paste-input"].value = "";
   els["book-paste-error"].textContent = "";
+  els["book-file-input"].value = "";
   els["export-paste-input"].value = "";
   els["export-paste-error"].textContent = "";
   els["book-file-error"].hidden = true;
@@ -1087,10 +1236,9 @@ function setupGlobalKeys() {
     }
     const key = event.key;
     let handled = true;
-    // Transposition keys speak through applyTranspose's own announcement;
-    // the shared tail below must not overwrite it with a stale
-    // snapshot.message.
-    let announced = false;
+    // Every handled action's spoken feedback comes from the render
+    // (announceTriageChange, F11) or from its own announcement
+    // (applyTranspose, applyAutoAccept) — never from a second call here.
     if (key === "ArrowDown" || key === "j") applyAction("next");
     else if (key === "ArrowUp" || key === "k") applyAction("prev");
     else if (key === "PageDown") applyAction("page_down");
@@ -1113,12 +1261,7 @@ function setupGlobalKeys() {
     else if (key === "n") applyAction("noise");
     else if (key === "e") applyAction("edit");
     else if (key === "u") applyAction("undo");
-    else if (key === "a") {
-      // The summary is announced by applyAutoAccept; the shared tail below
-      // must not overwrite it with a stale snapshot.message.
-      applyAutoAccept();
-      announced = true;
-    }
+    else if (key === "a") applyAutoAccept();
     else if (key === "p" || key === "s") applyAction("preview");
     else if (key === "+" || key === "=" || key === "-" || key === "0") {
       // Preview phase only, mirroring the Transpose buttons. Deliberately
@@ -1131,7 +1274,6 @@ function setupGlobalKeys() {
       if (state.snapshot?.phase === "preview") {
         if (key === "0") resetTranspose();
         else applyTranspose(key === "-" ? -1 : 1);
-        announced = true;
       } else {
         handled = false;
       }
@@ -1148,8 +1290,6 @@ function setupGlobalKeys() {
 
     if (handled) {
       event.preventDefault();
-      const snapshot = state.snapshot;
-      if (!announced && snapshot?.message) announce(snapshot.message);
     }
   });
 }
@@ -1190,6 +1330,7 @@ function setupControls() {
   els["start-over"].addEventListener("click", startOver);
   els["triage-back"].addEventListener("click", bookBack);
   els["paste-use"].addEventListener("click", usePastedText);
+  els["paste-book"].addEventListener("click", startBookFromPaste);
 
   for (const button of els["triage-screen"].querySelectorAll("button[data-action]")) {
     button.addEventListener("click", () => {
@@ -1197,9 +1338,9 @@ function setupControls() {
         applyAutoAccept();
         return;
       }
+      // Feedback for every handled action is announceTriageChange's job
+      // (F11): one composed message per action, no second call here.
       applyAction(button.dataset.action);
-      const snapshot = state.snapshot;
-      if (snapshot?.message) announce(snapshot.message);
     });
   }
 
@@ -1219,6 +1360,7 @@ function setupControls() {
   els["book-form-continue"].addEventListener("click", startBookTriage);
   els["book-form-reset"].addEventListener("click", startOver);
   els["book-paste-add"].addEventListener("click", () => addPastedSong("form"));
+  els["book-file-input"].addEventListener("change", addBookFiles);
   els["export-paste-add"].addEventListener("click", () => addPastedSong("export"));
   for (const id of ["book-title-input", "book-author-input"]) {
     const input = els[id];

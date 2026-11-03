@@ -42,7 +42,10 @@
         <textarea id="paste-input" rows="8" spellcheck="false"></textarea>
         <div class="actions">
           <button type="button" id="paste-use" class="primary">Use pasted text</button>
+          <button type="button" id="paste-book">Start a book</button>
         </div>
+        <p class="hint">Use pasted text opens a single song; Start a book
+          begins a book you can add more songs to.</p>
         <p class="hint">Pasted text stays in this browser tab; it is never sent
           anywhere or saved between visits.</p>
         <p id="paste-error" role="alert" class="error"></p>
@@ -58,8 +61,7 @@
       <h2 id="book-form-heading">Book details</h2>
       <p class="hint">Both fields are optional and special characters are
         escaped by the songbook engine. Songs appear in the book in the order
-        the sources were added (chosen files first, then pasted songs in the
-        order added).</p>
+        the sources were added.</p>
       <div class="metadata-field">
         <label for="book-title-input">Title
           <input type="text" id="book-title-input" autocomplete="off">
@@ -82,6 +84,14 @@
         <p id="book-paste-error" role="alert" class="error"></p>
       </div>
       <div class="actions">
+        <label class="file-label">
+          <span class="button-like">Add .txt or .crd files</span>
+          <input type="file" id="book-file-input" accept=".txt,.crd" multiple>
+        </label>
+      </div>
+      <h3>Songs in this book</h3>
+      <ul id="book-song-list" class="book-songs"></ul>
+      <div class="actions">
         <button type="button" id="book-form-continue" class="primary">Start triage</button>
         <button type="button" id="book-form-reset">Start over</button>
       </div>
@@ -102,7 +112,7 @@
 
     <section id="triage-screen" class="screen" aria-labelledby="triage-heading" hidden>
       <h2 id="triage-heading">Review each line</h2>
-      <p id="triage-status" class="status-bar" role="status" aria-live="polite" aria-atomic="true"></p>
+      <p id="triage-status" class="status-bar"></p>
       <p id="triage-live" class="visually-hidden" aria-live="polite"></p>
       <div id="triage-list" role="list"></div>
       <div id="current-controls">
@@ -135,7 +145,7 @@
 
     <section id="preview-screen" class="screen" aria-labelledby="preview-heading" hidden>
       <h2 id="preview-heading">Structure preview</h2>
-      <div id="preview-content" tabindex="0" aria-label="Song structure preview, scrollable"></div>
+      <div id="preview-content" tabindex="0" role="region" aria-label="Song structure preview, scrollable"></div>
       <div class="actions" role="group" aria-label="Transposition">
         <button type="button" id="transpose-down" aria-keyshortcuts="-">Transpose −1 <kbd aria-hidden="true">-</kbd><span class="visually-hidden"> (shortcut minus)</span></button>
         <button type="button" id="transpose-up" aria-keyshortcuts="+ =">Transpose +1 <kbd aria-hidden="true">+</kbd><span class="visually-hidden"> (shortcut plus)</span></button>
