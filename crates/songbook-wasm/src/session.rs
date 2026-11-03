@@ -160,9 +160,102 @@ mod tests {
         let flag = snapshot.lines.iter().find(|line| line.flag).unwrap();
         assert_eq!(flag.text, "mystery line");
         assert_eq!(flag.classifier, "ambiguous");
+        assert_eq!(flag.effective_label, "ambiguous");
         assert_eq!(flag.verdict, "pending");
         assert_eq!(flag.status, "pending");
         assert!(snapshot.lines.iter().any(|line| line.status == "kept"));
+    }
+
+    #[test]
+    fn line_labels_are_effective_with_honest_status() {
+        let raw = "Song: Test\nArtist: Band\n[Verse]\n[Am]Hello\nmystery line\n\nF#m:   244222\n";
+        let mut session = Session::new(raw).unwrap();
+        session.handle_action("confirm").unwrap();
+        let snapshot = session.snapshot();
+
+        // Pending ambiguous: the label is the parser's guess as-is — nothing is
+        // decided, so it equals the classifier and no "(was: …)" suffix appears.
+        let flag = &snapshot.lines[index_of(&snapshot, "mystery line")];
+        assert_eq!(flag.verdict, "pending");
+        assert_eq!(flag.effective_label, "ambiguous");
+        assert_eq!(flag.classifier, "ambiguous");
+        assert_eq!(flag.status, "pending");
+
+        // Kept lyric: the label equals the parser's label (no suffix case).
+        let lyric = &snapshot.lines[index_of(&snapshot, "[Am]Hello")];
+        assert_eq!(lyric.effective_label, "lyric");
+        assert_eq!(lyric.classifier, "lyric");
+        assert_eq!(lyric.status, "kept");
+
+        // Preamble metadata is consumed (nothing exports), but the label
+        // keeps the parser's name; the "preamble" status explains why.
+        let title = &snapshot.lines[index_of(&snapshot, "Song: Test")];
+        assert!(title.preamble);
+        assert_eq!(title.effective_label, "noise");
+        assert_eq!(title.classifier, "noise");
+        assert_eq!(title.status, "preamble");
+    }
+
+    #[test]
+    fn kept_blank_and_noise_lines_report_dropped_status() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello\n\nF#m:   244222\nmystery line";
+        let mut session = Session::new(raw).unwrap();
+        session.handle_action("confirm").unwrap();
+        let snapshot = session.snapshot();
+
+        // Keep on blank/noise-kind lines exports nothing: status and label
+        // both read dropped instead of the dishonest kept/✓ pairing.
+        let blank = snapshot
+            .lines
+            .iter()
+            .find(|line| line.classifier == "blank" && !line.preamble)
+            .unwrap();
+        assert_eq!(blank.verdict, "keep");
+        assert_eq!(blank.effective_label, "dropped");
+        assert_eq!(blank.status, "dropped");
+
+        let definition = snapshot
+            .lines
+            .iter()
+            .find(|line| line.text.contains("F#m:"))
+            .unwrap();
+        assert!(!definition.preamble);
+        assert_eq!(definition.classifier, "noise");
+        assert_eq!(definition.verdict, "keep");
+        assert_eq!(definition.effective_label, "dropped");
+        assert_eq!(definition.status, "dropped");
+    }
+
+    #[test]
+    fn explicit_picks_discard_and_undo_label_honestly() {
+        for (action, label, status) in [
+            ("lyric", "lyric", "kept"),
+            ("chord_only", "chord-only", "kept"),
+            ("section_header", "section header", "kept"),
+            ("noise", "noise", "dropped"),
+            ("discard", "discarded", "dropped"),
+        ] {
+            let mut session = session();
+            session.handle_action("confirm").unwrap();
+            session.handle_action(action).unwrap();
+            let snapshot = session.snapshot();
+            let line = &snapshot.lines[index_of(&snapshot, "mystery line")];
+            assert_eq!(line.effective_label, label, "{action}");
+            assert_eq!(line.status, status, "{action}");
+        }
+
+        // The label derives from the verdict, not stored state: undo reverts
+        // the label with the decision.
+        let mut session = session();
+        session.handle_action("confirm").unwrap();
+        let index = index_of(&session.snapshot(), "mystery line");
+        session.handle_action("discard").unwrap();
+        assert_eq!(session.snapshot().lines[index].effective_label, "discarded");
+        session.handle_action("undo").unwrap();
+        let line = &session.snapshot().lines[index];
+        assert_eq!(line.verdict, "pending");
+        assert_eq!(line.effective_label, "ambiguous");
+        assert_eq!(line.status, "pending");
     }
 
     #[test]

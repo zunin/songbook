@@ -31,7 +31,12 @@ pub struct LineSnapshot {
     pub index: usize,
     pub original: String,
     pub text: String,
+    /// The parser's kind label for the raw line.
     pub classifier: String,
+    /// What the line is now (`ReviewLine::effective_label`): the parser's label
+    /// while pending or preamble-consumed, the effective outcome once decided.
+    /// The label slot's single source of truth.
+    pub effective_label: String,
     pub preamble: bool,
     pub flag: bool,
     pub verdict: String,
@@ -127,6 +132,7 @@ fn line_snapshot(index: usize, line: &ReviewLine) -> LineSnapshot {
         original: line.original.clone(),
         text: line.text().to_string(),
         classifier: line_kind_label(&line.kind).to_string(),
+        effective_label: line.effective_label().to_string(),
         preamble: line.preamble,
         flag: line.is_flag(),
         verdict: verdict_name(line.verdict).to_string(),
@@ -174,6 +180,10 @@ fn status_name(line: &ReviewLine) -> &'static str {
         "dropped"
     } else if line.preamble && line.verdict == Verdict::Keep {
         "preamble"
+    } else if line.is_dropped() {
+        // Keep on a blank/noise-kind line exports nothing (effective_kind is
+        // None): the honest status is dropped, not kept.
+        "dropped"
     } else if line.edited.is_some() {
         "edited"
     } else {

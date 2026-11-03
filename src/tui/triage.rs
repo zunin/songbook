@@ -141,6 +141,10 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
                 ("×", "dropped", Color::Red)
             } else if line.preamble && line.verdict == Verdict::Keep {
                 ("·", "preamble", Color::DarkGray)
+            } else if line.is_dropped() {
+                // Keep on a blank/noise-kind line exports nothing: the same
+                // honest ×/dropped the web status reports for it.
+                ("×", "dropped", Color::Red)
             } else if line.edited.is_some() {
                 ("✎", "edited", Color::Magenta)
             } else {
@@ -154,11 +158,20 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
             } else {
                 Style::default().fg(color)
             };
+            // Label names what the line IS NOW; the muted "was" clause only
+            // when it differs from the parser's label (UX advisor rule).
+            let label = line.effective_label();
+            let classifier = line_kind_label(&line.kind);
+            let was = if label == classifier {
+                String::new()
+            } else {
+                format!(" · was: {classifier}")
+            };
             Line::from(vec![
                 Span::styled(number, Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("{marker} "), style),
                 Span::styled(
-                    format!("[{} · {status}] ", line_kind_label(&line.kind)),
+                    format!("[{label} · {status}{was}] "),
                     Style::default().fg(color),
                 ),
                 Span::styled(line.text().to_string(), style),
@@ -286,9 +299,42 @@ mod tests {
         assert!(text.contains("Song: Test"));
         assert!(text.contains("[Verse]"));
         assert!(text.contains("[Am]Hello"));
-        assert!(text.contains("> [ambiguous · pending] mystery line"));
+        // Pending rows show the parser's guess as-is: no effective resolution,
+        // no was-clause.
+        assert!(
+            text.contains("> [ambiguous · pending] mystery line"),
+            "{text}"
+        );
+        // Preamble rows keep the classifier's name; the preamble status and
+        // dim color carry the "consumed" explanation.
+        assert!(text.contains("[noise · preamble] Song: Test"), "{text}");
         assert!(text.contains("classifier: ambiguous"));
         assert!(text.contains("f/F flag"));
+    }
+
+    #[test]
+    fn dropped_and_overridden_rows_show_effective_labels() {
+        let raw = "Song: T\n[Verse]\n[Am]Hello\n\nF#m:   244222\nmystery line";
+        let mut state = TriageState::new(parse(raw), raw);
+        state.handle(Key::Confirm);
+        let text = rendered(&state);
+        // Kept blank/noise-kind lines export nothing: honest ×/dropped, with
+        // the parser's label in the was clause.
+        assert!(
+            text.contains("× [dropped · dropped · was: noise] F#m"),
+            "{text}"
+        );
+        assert!(
+            text.contains("× [dropped · dropped · was: blank]"),
+            "{text}"
+        );
+
+        state.handle(Key::Discard);
+        let text = rendered(&state);
+        assert!(
+            text.contains("[discarded · dropped · was: ambiguous] mystery"),
+            "{text}"
+        );
     }
 
     #[test]

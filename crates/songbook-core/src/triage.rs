@@ -209,6 +209,42 @@ impl ReviewLine {
     pub fn is_flag(&self) -> bool {
         !self.preamble && matches!(self.kind, LineKind::Ambiguous(_) | LineKind::Fretboard(_))
     }
+
+    /// Whether the line contributes nothing to the rebuilt song (`effective_kind`
+    /// is `None`): discarded, noise-marked, preamble-consumed, or a kept
+    /// blank/noise-kind line. The honest "dropped" condition for UI status.
+    pub fn is_dropped(&self) -> bool {
+        self.effective_kind().is_none()
+    }
+
+    /// What the line IS NOW, for the review UI's label slot (UX advisor rule):
+    /// pending rows name the parser's guess as-is — nothing is decided yet, so
+    /// no effective resolution and no implied change — and preamble keeps keep
+    /// the parser's name too (the "preamble" status explains they were
+    /// consumed). Decided rows name the effective outcome: explicit picks and
+    /// Discard/Noise name their decision, and a kept body line resolves
+    /// through the same `effective_kind` semantics the rebuild uses (`None`
+    /// means the line is dropped from the body).
+    pub fn effective_label(&self) -> &'static str {
+        match self.verdict {
+            Verdict::Pending => line_kind_label(&self.kind),
+            Verdict::Discard => "discarded",
+            Verdict::Noise => "noise",
+            Verdict::Lyric => "lyric",
+            Verdict::ChordOnly => "chord-only",
+            Verdict::SectionHeader => "section header",
+            Verdict::Keep => {
+                if self.preamble {
+                    line_kind_label(&self.kind)
+                } else {
+                    match self.effective_kind() {
+                        None => "dropped",
+                        Some(kind) => line_kind_label(&kind),
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn line_kind_label(kind: &LineKind) -> &'static str {
@@ -897,6 +933,85 @@ F#m:   244222
             .lines
             .iter()
             .any(|line| line == &LineKind::Lyric("mystery line".into())));
+    }
+
+    #[test]
+    fn effective_label_names_what_the_line_is_now() {
+        let index = flag_index(&state_for(AMBIGUOUS_RAW), "mystery");
+        for (key, label) in [
+            (Key::Confirm, "lyric"), // Keep resolves ambiguous as lyric
+            (Key::Discard, "discarded"),
+            (Key::Noise, "noise"),
+            (Key::Lyric, "lyric"),
+            (Key::ChordOnly, "chord-only"),
+            (Key::SectionHeader, "section header"),
+        ] {
+            let mut state = state_for(AMBIGUOUS_RAW);
+            state.handle(key);
+            assert_eq!(
+                state.lines[index].effective_label(),
+                label,
+                "{key:?} on {index}"
+            );
+        }
+
+        // Pending names the parser's guess as-is: nothing is decided yet, so no
+        // effective resolution and no implied "(was: …)" change.
+        let state = state_for(AMBIGUOUS_RAW);
+        assert_eq!(state.lines[index].effective_label(), "ambiguous");
+    }
+
+    #[test]
+    fn kept_blank_and_noise_lines_label_as_dropped() {
+        let raw = "Song: T\n[Verse]\n[Am]Hello\n\nF#m:   244222\nmystery line";
+        let state = TriageState::new(parse(raw), raw);
+
+        let lyric = &state.lines[flag_index(&state, "[Am]Hello")];
+        assert_eq!(lyric.effective_label(), "lyric");
+        assert!(!lyric.is_dropped());
+
+        // A kept blank body line exports nothing: dropped, honestly.
+        let blank = state
+            .lines
+            .iter()
+            .find(|line| matches!(line.kind, LineKind::Blank))
+            .unwrap();
+        assert!(!blank.preamble);
+        assert_eq!(blank.verdict, Verdict::Keep);
+        assert!(blank.is_dropped());
+        assert_eq!(blank.effective_label(), "dropped");
+
+        let definition = &state.lines[flag_index(&state, "F#m:")];
+        assert!(
+            matches!(definition.kind, LineKind::Noise(_)),
+            "{:?}",
+            definition.kind
+        );
+        assert!(!definition.preamble);
+        assert!(definition.is_dropped());
+        assert_eq!(definition.effective_label(), "dropped");
+    }
+
+    #[test]
+    fn pending_and_preamble_rows_label_with_the_classifier() {
+        let raw = "Song: T\n[Verse]\n[Am]Hello\nmystery line";
+        let state = TriageState::new(parse(raw), raw);
+
+        // Pending: the label is the parser's guess, equal to the classifier
+        // so no "(was: …)" suffix can appear.
+        let flag = &state.lines[flag_index(&state, "mystery")];
+        assert_eq!(flag.verdict, Verdict::Pending);
+        assert_eq!(flag.effective_label(), "ambiguous");
+        assert_eq!(flag.effective_label(), line_kind_label(&flag.kind));
+
+        // Preamble: consumed as metadata (is_dropped holds — nothing exports),
+        // but the label keeps the parser's name; the "preamble" status
+        // carries the explanation, dimmed per the advisor's table.
+        let title = &state.lines[flag_index(&state, "Song: T")];
+        assert!(title.preamble);
+        assert!(title.is_dropped());
+        assert_eq!(title.effective_label(), "noise");
+        assert_eq!(title.effective_label(), line_kind_label(&title.kind));
     }
 
     #[test]

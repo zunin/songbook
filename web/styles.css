@@ -260,9 +260,16 @@ button.primary kbd {
 .line-kind {
   font-family: var(--sans);
   font-size: 0.78rem;
-  color: var(--muted);
+  color: var(--fg);
   min-width: 7em;
 }
+/* The label slot names what the line is now, in normal foreground once the
+   row is decided. Pending rows keep the muted guess (their "?" marker and
+   tint carry "needs attention"); preamble rows stay de-emphasized like
+   their · marker. The "(was: …)" suffix is always muted. */
+.triage-line.pending .line-kind,
+.triage-line.preamble .line-kind { color: var(--muted); }
+.line-kind .was { color: var(--muted); }
 .line-text {
   white-space: pre-wrap;
   flex: 1 1 20rem;

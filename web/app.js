@@ -80,18 +80,6 @@ function statusText(snapshot) {
     `${pending} pending · line ${snapshot.position + 1} current`;
 }
 
-function verdictLabel(line) {
-  switch (line.verdict) {
-    case "keep": return "kept";
-    case "discard": return "discarded";
-    case "lyric": return "lyric";
-    case "chord_only": return "chord only";
-    case "section_header": return "header";
-    case "noise": return "noise";
-    default: return "pending";
-  }
-}
-
 function markerFor(line) {
   switch (line.status) {
     case "pending": return line.flag ? "?" : "·";
@@ -100,6 +88,16 @@ function markerFor(line) {
     case "edited": return "✎";
     default: return "✓";
   }
+}
+
+// The label slot names what the line IS NOW (the snapshot's effectiveLabel);
+// the parser's name only survives as a muted "(was: …)" suffix when the two
+// differ. One lowercase vocabulary: lyric, chord-only, section header,
+// fretboard, noise, dropped, discarded, ambiguous, blank.
+function wasSuffix(line) {
+  return line.effectiveLabel === line.classifier
+    ? ""
+    : ` (was: ${line.classifier})`;
 }
 
 function renderMetadata(snapshot) {
@@ -184,6 +182,21 @@ function applyAction(action) {
   render();
 }
 
+// Bulk accept ("a" / "Accept remaining pending"): pending lines become keeps
+// and the session moves to the preview. The summary counts the lines that
+// were accepted and how many of those were plain parser guesses (ambiguous
+// flags resolved to lyrics), from the pre-action snapshot.
+function applyAutoAccept() {
+  const before = state.snapshot;
+  const accepted = before
+    ? before.lines.filter((line) => line.status === "pending")
+    : [];
+  applyAction("auto_accept");
+  if (!state.snapshot || state.snapshot === before) return; // failed: reported
+  const guesses = accepted.filter((line) => line.classifier === "ambiguous").length;
+  announce(`Accepted ${accepted.length} pending lines, ${guesses} were parser guesses.`);
+}
+
 function render() {
   const snapshot = state.snapshot;
   if (!snapshot) return;
@@ -256,9 +269,15 @@ function renderTriageList(snapshot) {
 
     const kind = document.createElement("span");
     kind.className = "line-kind";
-    kind.textContent = line.classifier;
+    kind.textContent = line.effectiveLabel;
+    if (line.effectiveLabel !== line.classifier) {
+      const was = document.createElement("span");
+      was.className = "was";
+      was.textContent = wasSuffix(line);
+      kind.append(was);
+    }
 
-    const described = `status ${line.status}, verdict ${verdictLabel(line)}` +
+    const described = `status ${line.status}` +
       `${line.flag ? ", flagged" : ""}${line.index === snapshot.position ? ", current" : ""}`;
 
     if (state.editing && line.index === snapshot.position) {
@@ -268,7 +287,7 @@ function renderTriageList(snapshot) {
       select.type = "button";
       select.className = "line-select";
       select.setAttribute("aria-label",
-        `Line ${line.index + 1}, ${line.classifier}, ${described}: ` +
+        `Line ${line.index + 1}, ${line.effectiveLabel}${wasSuffix(line)}, ${described}: ` +
         (line.edited ? line.text : line.original));
       const text = document.createElement("span");
       text.className = "line-text";
@@ -1062,7 +1081,12 @@ function setupGlobalKeys() {
     else if (key === "n") applyAction("noise");
     else if (key === "e") applyAction("edit");
     else if (key === "u") applyAction("undo");
-    else if (key === "a") applyAction("auto_accept");
+    else if (key === "a") {
+      // The summary is announced by applyAutoAccept; the shared tail below
+      // must not overwrite it with a stale snapshot.message.
+      applyAutoAccept();
+      announced = true;
+    }
     else if (key === "p" || key === "s") applyAction("preview");
     else if (key === "+" || key === "=" || key === "-" || key === "0") {
       // Preview phase only, mirroring the Transpose buttons. Deliberately
@@ -1131,6 +1155,10 @@ function setupControls() {
 
   for (const button of els["triage-screen"].querySelectorAll("button[data-action]")) {
     button.addEventListener("click", () => {
+      if (button.dataset.action === "auto_accept") {
+        applyAutoAccept();
+        return;
+      }
       applyAction(button.dataset.action);
       const snapshot = state.snapshot;
       if (snapshot?.message) announce(snapshot.message);
