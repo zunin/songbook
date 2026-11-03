@@ -2,12 +2,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 use songbook_core::triage::{line_kind_label, Phase, TriageState, Verdict};
 
-pub fn draw(frame: &mut Frame, state: &TriageState) {
+pub fn draw(frame: &mut Frame, state: &TriageState, confirm_quit: bool) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -20,6 +20,9 @@ pub fn draw(frame: &mut Frame, state: &TriageState) {
     draw_metadata(frame, chunks[0], state);
     draw_main(frame, chunks[1], state);
     draw_footer(frame, chunks[2], state);
+    if confirm_quit {
+        draw_quit_confirm(frame, area);
+    }
 }
 
 fn draw_metadata(frame: &mut Frame, area: Rect, state: &TriageState) {
@@ -121,8 +124,11 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
         .constraints([Constraint::Min(3), Constraint::Length(5)])
         .split(area);
 
+    // "dot = preamble" instead of the marker itself (UX review F15): the
+    // marker is a middot, so "… × dropped · · preamble" read as one stray
+    // "· ·" separator collision.
     let title = format!(
-        "Input · {} lines · {} flagged · {} pending · > current · ? pending · ✓ kept · × dropped · · preamble{}",
+        "Input · {} lines · {} flagged · {} pending · > current · ? pending · ✓ kept · × dropped · dot = preamble{}",
         state.lines.len(),
         state.flags.len(),
         state.pending_flags(),
@@ -224,23 +230,64 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, state: &TriageState) {
-    let legend = match state.phase {
-        Phase::Metadata => {
-            "Tab/Up/Down field · type edit · Ctrl+U clear · Enter continue · Esc quit · Ctrl+C quit"
+    // Edit mode owns the footer while it is active (UX review F3/F4): the
+    // triage keys are inert while typing, and the legend names the honest
+    // limitation — the editor is append/backspace-only, no cursor model.
+    let legend = if state.editing {
+        "type to edit (append-only) · Backspace delete · Enter save · Esc cancel"
+    } else {
+        match state.phase {
+            Phase::Metadata => {
+                "Tab/Up/Down field · type edit · Ctrl+U clear · Enter continue · Esc quit · Ctrl+C quit"
+            }
+            Phase::Preview => {
+                "j/k or Up/Down scroll · PgUp/PgDn page · Enter export · Esc/b back to triage · q quit"
+            }
+            // Same vocabulary as the web buttons (UX review F9): d discard,
+            // a accept remaining. Transposition is preview-only (F10), so the
+            // +/-/0 keys and their legend entry are gone from triage.
+            _ => concat!(
+                "j/k line · f/F flag · PgUp/PgDn jump · Enter keep · d discard · l lyric · c chord · ",
+                "h header · n noise · e edit · u undo · a accept remaining · s preview · q quit"
+            ),
         }
-        Phase::Preview => {
-            "j/k or Up/Down scroll · PgUp/PgDn page · Enter export · Esc/b back to triage · q quit"
-        }
-        _ => concat!(
-            "j/k line · f/F flag · PgUp/PgDn jump · Enter keep · d drop · l lyric · c chord · ",
-            "h header · n noise · e edit · u undo · a accept rest · +/- transpose · 0 reset · ",
-            "s preview · q quit"
-        ),
     };
     let paragraph = Paragraph::new(legend)
         .block(Block::default().borders(Borders::ALL).title("Keys"))
         .wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
+}
+
+/// Centered quit confirmation (UX review F1): the first q/Esc raises it, a
+/// second consecutive quit-press quits, any other key continues. The copy
+/// mirrors the web's start-over confirm ("All triage decisions for this song
+/// will be lost").
+fn draw_quit_confirm(frame: &mut Frame, area: Rect) {
+    let width = 60.min(area.width);
+    let height = 4.min(area.height);
+    let popup = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, popup);
+    let text = vec![
+        Line::from(Span::styled(
+            "Quit? All triage decisions for this song will be lost.",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from("q/Esc again to quit, any other key to continue."),
+    ];
+    let paragraph = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Confirm quit")
+                .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(paragraph, popup);
 }
 
 /// Persistent transposition indicator for block titles, empty at zero offset.
@@ -263,9 +310,15 @@ mod tests {
     }
 
     fn rendered_at(state: &TriageState, width: u16, height: u16) -> String {
+        rendered_with(state, false, width, height)
+    }
+
+    fn rendered_with(state: &TriageState, confirm_quit: bool, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| draw(frame, state)).unwrap();
+        terminal
+            .draw(|frame| draw(frame, state, confirm_quit))
+            .unwrap();
         terminal
             .backend()
             .buffer()
@@ -379,9 +432,58 @@ mod tests {
         state.handle(Key::TransposeUp);
         let text = rendered(&state);
         assert!(text.contains("Transposed +2"), "{text}");
-        assert!(text.contains("+/- transpose"), "{text}");
 
         state.handle(Key::TransposeReset);
         assert!(!rendered(&state).contains("Transposed"));
+    }
+
+    #[test]
+    fn triage_legend_matches_the_web_vocabulary_and_omits_transpose() {
+        let mut state = example_state();
+        state.handle(Key::Confirm);
+        let text = rendered(&state);
+        // Web-aligned wording (UX review F9): d discard, a accept remaining.
+        assert!(text.contains("d discard"), "{text}");
+        assert!(text.contains("a accept remaining"), "{text}");
+        assert!(!text.contains("d drop"), "{text}");
+        assert!(!text.contains("accept rest"), "{text}");
+        // Transposition is preview-only (UX review F10): no keys, no legend.
+        assert!(!text.contains("transpose"), "{text}");
+        assert!(!text.contains("0 reset"), "{text}");
+    }
+
+    #[test]
+    fn editing_swaps_the_triage_legend_for_the_edit_legend() {
+        let mut state = example_state();
+        state.handle(Key::Confirm);
+        let text = rendered(&state);
+        assert!(text.contains("d discard"), "{text}");
+
+        state.handle(Key::Edit);
+        let text = rendered(&state);
+        // UX review F3/F4: the triage keys are inert while typing, so the
+        // footer names the editing keys and the append-only limitation.
+        assert!(text.contains("type to edit (append-only)"), "{text}");
+        assert!(text.contains("Backspace delete"), "{text}");
+        assert!(text.contains("Enter save"), "{text}");
+        assert!(text.contains("Esc cancel"), "{text}");
+        assert!(!text.contains("d discard"), "{text}");
+        assert!(!text.contains("f/F flag"), "{text}");
+    }
+
+    #[test]
+    fn quit_confirm_renders_centered_with_the_web_copy() {
+        let mut state = example_state();
+        state.handle(Key::Confirm);
+        let text = rendered_with(&state, true, 120, 40);
+        assert!(text.contains("Quit?"), "{text}");
+        assert!(
+            text.contains("All triage decisions for this song will be lost"),
+            "{text}"
+        );
+        assert!(text.contains("q/Esc again to quit"), "{text}");
+        assert!(text.contains("any other key to continue"), "{text}");
+        // The confirm title marks the popup.
+        assert!(text.contains("Confirm quit"), "{text}");
     }
 }

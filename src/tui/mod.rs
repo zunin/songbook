@@ -60,12 +60,17 @@ fn run_loop(
     state: &mut TriageState,
     out_path: &Path,
 ) -> anyhow::Result<()> {
+    // Two-step quit (UX review F1): the TUI layer intercepts q/Esc before the
+    // core sees them, so neither core nor the wasm session changes — the web
+    // already guards the same action with its own confirm dialog.
+    let mut quit_confirm = QuitConfirm::default();
     loop {
+        let confirming = quit_confirm.active();
         terminal.draw(|frame| {
             if state.phase == Phase::Preview {
                 preview::draw(frame, state, out_path);
             } else {
-                triage::draw(frame, state);
+                triage::draw(frame, state, confirming);
             }
         })?;
         if matches!(state.phase, Phase::Done | Phase::Quit) {
@@ -75,10 +80,72 @@ fn run_loop(
             if key.kind == KeyEventKind::Release {
                 continue;
             }
+            // Some(true): second consecutive quit press — quit through the
+            // core so every surface shares Phase::Quit semantics.
+            // Some(false): the press was consumed to raise the confirm; it
+            // must not also reach the core (Esc/q would quit directly).
+            // None: not a quit press — map and handle it normally (this also
+            // cancels a raised confirm).
+            match quit_confirm.handle_key(&key, state) {
+                Some(true) => {
+                    state.handle(Key::Quit);
+                    continue;
+                }
+                Some(false) => continue,
+                None => {}
+            }
             if let Some(mapped) = map_key(key, state) {
                 state.handle(mapped);
             }
         }
+    }
+}
+
+/// Two-step quit (UX review F1): a single q/Esc in the metadata or triage
+/// phase must not destroy every decision at once. The first press raises a
+/// centered confirm; a second consecutive quit-press quits; any other key
+/// cancels. Ctrl+C keeps its immediate semantics, edit mode owns its own keys
+/// (Esc cancels the edit, letters type), and the preview phase is excluded —
+/// Esc means "back to triage" there, and its q stays a direct quit.
+#[derive(Debug, Default)]
+struct QuitConfirm {
+    active: bool,
+}
+
+impl QuitConfirm {
+    /// Consumes a key event. Returns `Some(true)` to quit now, `Some(false)`
+    /// when the quit-press was consumed to raise the confirm (the key must
+    /// not also reach the core — Esc/q would quit directly), and `None` when
+    /// the key is not a quit press and should be mapped normally.
+    fn handle_key(&mut self, key: &KeyEvent, state: &TriageState) -> Option<bool> {
+        if !is_quit_press(key, state) {
+            self.active = false;
+            return None;
+        }
+        if self.active {
+            return Some(true);
+        }
+        self.active = true;
+        Some(false)
+    }
+
+    fn active(&self) -> bool {
+        self.active
+    }
+}
+
+/// Whether `key` is a quit press in the current phase: `Esc`/`q` in triage,
+/// only `Esc` in metadata (there `q` types into the field, so it must not
+/// quit). Control-modified keys are never quit presses — Ctrl+C is handled
+/// separately and keeps its immediate semantics.
+fn is_quit_press(key: &KeyEvent, state: &TriageState) -> bool {
+    if key.modifiers.contains(KeyModifiers::CONTROL) || state.editing {
+        return false;
+    }
+    match state.phase {
+        Phase::Metadata => key.code == KeyCode::Esc,
+        Phase::Triage => matches!(key.code, KeyCode::Esc | KeyCode::Char('q')),
+        _ => false,
     }
 }
 
@@ -148,9 +215,14 @@ fn map_key(key: KeyEvent, state: &TriageState) -> Option<Key> {
         KeyCode::Char('s') => Some(Key::Skip),
         KeyCode::Char('q') | KeyCode::Esc => Some(Key::Quit),
         KeyCode::Backspace => Some(Key::Backspace),
-        KeyCode::Char('+') | KeyCode::Char('=') if !ctrl => Some(Key::TransposeUp),
-        KeyCode::Char('-') if !ctrl => Some(Key::TransposeDown),
-        KeyCode::Char('0') if !ctrl => Some(Key::TransposeReset),
+        // Transposition is preview-only (UX review F10): inert in triage, and
+        // the legend no longer advertises it. The preview branch below maps
+        // and advertises the same keys.
+        KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Char('-') | KeyCode::Char('0')
+            if !ctrl =>
+        {
+            None
+        }
         KeyCode::Char(ch) if !ctrl => Some(Key::Char(ch)),
         _ => None,
     }
@@ -244,19 +316,21 @@ mod tests {
     }
 
     #[test]
-    fn triage_and_preview_map_transpose_keys() {
+    fn transpose_keys_are_inert_in_triage_and_mapped_in_preview() {
         let raw = "Song: Test\n[Verse]\n[Am]Hello\nmystery line";
         let mut state = TriageState::new(parse(raw), raw);
         state.handle(Key::Confirm);
-        for (code, expected) in [
-            (KeyCode::Char('+'), Key::TransposeUp),
-            (KeyCode::Char('='), Key::TransposeUp),
-            (KeyCode::Char('-'), Key::TransposeDown),
-            (KeyCode::Char('0'), Key::TransposeReset),
+        assert_eq!(state.phase, Phase::Triage);
+        for code in [
+            KeyCode::Char('+'),
+            KeyCode::Char('='),
+            KeyCode::Char('-'),
+            KeyCode::Char('0'),
         ] {
             assert_eq!(
                 map_key(key_event(code, KeyModifiers::NONE), &state),
-                Some(expected)
+                None,
+                "transpose keys must be inert in triage (UX review F10)"
             );
         }
 
@@ -273,6 +347,88 @@ mod tests {
                 Some(expected)
             );
         }
+    }
+
+    #[test]
+    fn quit_press_needs_a_second_consecutive_press_in_triage() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello\nmystery line";
+        let mut state = TriageState::new(parse(raw), raw);
+        state.handle(Key::Confirm);
+        let mut confirm = QuitConfirm::default();
+        let q = key_event(KeyCode::Char('q'), KeyModifiers::NONE);
+        // First press: consumed to raise the confirm; the key must not also
+        // reach the core, where it would quit outright.
+        assert_eq!(confirm.handle_key(&q, &state), Some(false));
+        assert!(confirm.active());
+        assert_eq!(state.phase, Phase::Triage, "the press was consumed");
+        // Second consecutive quit press: quit.
+        assert_eq!(confirm.handle_key(&q, &state), Some(true));
+
+        // Esc counts as a quit press too, in either order.
+        let mut confirm = QuitConfirm::default();
+        let esc = key_event(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(confirm.handle_key(&esc, &state), Some(false));
+        assert!(confirm.active());
+        assert_eq!(confirm.handle_key(&q, &state), Some(true));
+
+        // Any other key cancels a raised confirm instead of quitting, and is
+        // mapped normally (None).
+        let mut confirm = QuitConfirm::default();
+        assert_eq!(confirm.handle_key(&q, &state), Some(false));
+        assert!(confirm.active());
+        let j = key_event(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(confirm.handle_key(&j, &state), None);
+        assert!(!confirm.active());
+    }
+
+    #[test]
+    fn metadata_quit_confirms_on_esc_but_q_types_into_the_field() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello\nmystery line";
+        let state = TriageState::new(parse(raw), raw);
+        let mut confirm = QuitConfirm::default();
+        let q = key_event(KeyCode::Char('q'), KeyModifiers::NONE);
+        assert_eq!(
+            confirm.handle_key(&q, &state),
+            None,
+            "q types into the metadata field"
+        );
+        assert!(!confirm.active());
+        let esc = key_event(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(confirm.handle_key(&esc, &state), Some(false));
+        assert!(confirm.active());
+    }
+
+    #[test]
+    fn editing_preview_and_ctrl_c_are_not_quit_presses() {
+        let raw = "Song: Test\n[Verse]\n[Am]Hello\nmystery line";
+        let mut state = TriageState::new(parse(raw), raw);
+        state.handle(Key::Confirm);
+        state.handle(Key::Edit);
+        let mut confirm = QuitConfirm::default();
+        let esc = key_event(KeyCode::Esc, KeyModifiers::NONE);
+        assert_eq!(
+            confirm.handle_key(&esc, &state),
+            None,
+            "Esc cancels the edit, not the session"
+        );
+        assert!(!confirm.active());
+
+        state.handle(Key::Escape); // leave edit mode
+        state.handle(Key::Skip);
+        assert_eq!(state.phase, Phase::Preview);
+        assert_eq!(
+            confirm.handle_key(&esc, &state),
+            None,
+            "preview Esc means back to triage"
+        );
+
+        let ctrl_c = key_event(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(
+            confirm.handle_key(&ctrl_c, &state),
+            None,
+            "Ctrl+C keeps its immediate semantics, not the confirm"
+        );
+        assert!(!confirm.active());
     }
 
     #[test]

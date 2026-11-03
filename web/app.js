@@ -34,7 +34,7 @@ function initEls() {
     "metadata-form", "metadata-continue", "metadata-error",
     "triage-status", "triage-live", "triage-list", "start-over",
     "preview-content", "preview-back", "standalone-toggle", "download-tex",
-    "download-pdf", "pdf-status",
+    "download-pdf", "pdf-status", "convert-another",
     "transpose-down", "transpose-up", "transpose-reset", "transpose-label",
     "book-banner", "book-progress", "book-file-error",
     "book-form-screen", "book-form-status", "book-title-input",
@@ -120,13 +120,15 @@ function renderMetadata(snapshot) {
     input.dataset.index = String(field.index);
 
     label.append(input);
+    wrap.append(label);
+    // The hint trails the field, reading "Title [input] (inferred)" — the
+    // same {label} {value} (inferred) order the TUI metadata panel uses.
     if (field.inferred) {
       const hint = document.createElement("span");
       hint.className = "hint";
       hint.textContent = "(inferred)";
       wrap.append(hint);
     }
-    wrap.append(label);
     form.append(wrap);
 
     input.addEventListener("focus", () => syncMetadataField(field.index));
@@ -233,17 +235,28 @@ function refreshMetadataValues(snapshot) {
 
 function renderTriage(snapshot) {
   showScreen("triage-screen");
+  const wasEditing = state.editing;
   state.editing = snapshot.editing;
   els["triage-back"].hidden = !state.book;
   if (state.book) {
     els["triage-back"].textContent = bookBackLabel();
   }
   els["triage-status"].textContent = statusText(snapshot);
-  renderTriageList(snapshot);
+  renderTriageList(snapshot, wasEditing);
 }
 
-function renderTriageList(snapshot) {
+function renderTriageList(snapshot, wasEditing) {
   const list = els["triage-list"];
+  // Focus rule (UX review F2): the pull exists so a screen reader announces
+  // the row a verdict moved the cursor to — it must not yank focus out of
+  // the action buttons after every render. Pull only when focus already
+  // lived in the list (the rebuild destroyed it), when this screen just took
+  // over (the previous screen's focus died with it), or when edit mode just
+  // opened (the input must own focus to be typed into). Otherwise keep
+  // focus where it is and announce the new current line instead.
+  const focusInList = list.contains(document.activeElement);
+  const focusOnScreen = els["triage-screen"].contains(document.activeElement);
+  const enteringEdit = snapshot.editing && !wasEditing;
 
   list.textContent = "";
   for (const line of snapshot.lines) {
@@ -301,12 +314,27 @@ function renderTriageList(snapshot) {
   }
 
   const current = list.querySelector(".current");
-  if (current) {
-    const target = current.querySelector(".line-edit-input") ??
-      current.querySelector(".line-select");
-    if (target && document.activeElement !== target) target.focus();
+  const target = current &&
+    (current.querySelector(".line-edit-input") ??
+      current.querySelector(".line-select"));
+  if (target && (focusInList || !focusOnScreen || enteringEdit) &&
+      document.activeElement !== target) {
+    target.focus();
+  }
+  if (focusOnScreen && !focusInList && !enteringEdit) {
+    announceCurrentLine(snapshot);
   }
   els["triage-status"].textContent = statusText(snapshot);
+}
+
+// The spoken counterpart of the focus pull (UX review F2): when focus stays
+// outside the list, the screen reader still learns where the cursor went —
+// kept short and change-focused, in the one lowercase vocabulary.
+function announceCurrentLine(snapshot) {
+  const line = snapshot.lines[snapshot.position];
+  if (!line) return;
+  announce(`Line ${snapshot.position + 1}, ${line.effectiveLabel}, ` +
+    `${line.status}: ${line.edited ? line.text : line.original}`);
 }
 
 function buildEditInput(line) {
@@ -340,15 +368,14 @@ function buildEditInput(line) {
   });
 
   input.addEventListener("keydown", (event) => {
+    // Enter saves, Escape cancels; Tab behaves natively (UX review F6) —
+    // tabbing away must not silently commit a half-typed edit.
     if (event.key === "Enter") {
       event.preventDefault();
       applyAction("confirm");
     } else if (event.key === "Escape") {
       event.preventDefault();
       applyAction("escape");
-    } else if (event.key === "Tab") {
-      event.preventDefault();
-      applyAction("confirm");
     }
   });
 
@@ -388,6 +415,11 @@ function renderPreviewPhase(snapshot) {
   els["download-tex"].hidden = book;
   els["download-pdf"].hidden = book;
   els["pdf-status"].hidden = book;
+  // The single-song flow's forward exit (UX review F14): after a download
+  // the next sentence in the user's head is "convert another song", not
+  // "start over". Book mode has its own forward exit (Next song / Continue
+  // to book export), so the button hides there.
+  els["convert-another"].hidden = book;
   els["book-next"].hidden = !book;
   if (state.book) {
     els["book-next"].textContent = bookForwardLabel();
@@ -1145,6 +1177,12 @@ function setupControls() {
     const files = Array.from(event.dataTransfer?.files ?? []);
     if (files.length === 1) loadFile(files[0]);
     else if (files.length > 1) startBook(files);
+    else {
+      // Folders (and any other drop the browser reports as zero files) must
+      // not be a silent no-op (UX review F13).
+      els["file-error"].textContent =
+        "That doesn't look like a .txt/.crd file — choose files, not folders.";
+    }
   });
 
   els["metadata-continue"].addEventListener("click", () => applyAction("confirm"));
@@ -1169,6 +1207,7 @@ function setupControls() {
   els["book-next"].addEventListener("click", bookForward);
   els["download-tex"].addEventListener("click", downloadTex);
   els["download-pdf"].addEventListener("click", downloadPdf);
+  els["convert-another"].addEventListener("click", startOver);
   els["standalone-toggle"].addEventListener("change", () => announce(
     els["standalone-toggle"].checked
       ? "Standalone document enabled."
