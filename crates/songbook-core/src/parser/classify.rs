@@ -314,7 +314,7 @@ pub fn parse(raw: &str) -> Song {
     let lines: Vec<&str> = raw.lines().collect();
     let analysis = analyze_preamble(&lines);
     let mut song = analysis.song;
-    let preamble = analysis.body_start;
+    let classified = classify_lines_from(&lines, analysis.body_start);
 
     let mut current = Section {
         kind: SectionKind::Intro,
@@ -322,9 +322,11 @@ pub fn parse(raw: &str) -> Song {
     };
     let mut pending_chords: Option<String> = None;
 
-    for line in &lines[preamble..] {
-        let trimmed = line.trim();
-        let kind = classify_line(trimmed);
+    for (line, classified) in lines.iter().zip(&classified) {
+        if classified.preamble {
+            continue;
+        }
+        let kind = classified.kind.clone();
         match kind {
             LineKind::SectionHeader(kind, _) => {
                 flush_pending(&mut current, &mut pending_chords);
@@ -371,6 +373,71 @@ pub fn parse(raw: &str) -> Song {
         song.title = first_lyric_line(&song.sections);
     }
     song
+}
+
+/// One raw line's contextual classification: the per-line kind plus whether
+/// `parse` consumes the line as preamble.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedLine {
+    pub kind: LineKind,
+    pub preamble: bool,
+}
+
+/// Contextually classifies every raw line, using the same pass as `parse`.
+///
+/// Unlike [`classify_line`], this sees the surrounding lines: a text line
+/// immediately below a chord-only line is the chord line's lyric target and is
+/// classified as `Lyric` (the chord line itself stays `ChordOnly`). The result
+/// has one entry per `raw.lines()` entry, in the same order.
+pub fn classify_lines(raw: &str) -> Vec<ClassifiedLine> {
+    let lines: Vec<&str> = raw.lines().collect();
+    let body_start = analyze_preamble(&lines).body_start;
+    classify_lines_from(&lines, body_start)
+}
+
+/// The contextual pass over lines whose preamble boundary is already known.
+/// `parse` calls this directly so its body classification and the public
+/// `classify_lines` are the same pass, not two copies.
+fn classify_lines_from(lines: &[&str], body_start: usize) -> Vec<ClassifiedLine> {
+    let mut classified = Vec::with_capacity(lines.len());
+    let mut pending_chords = false;
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if index < body_start {
+            classified.push(ClassifiedLine {
+                kind: classify_line(trimmed),
+                preamble: true,
+            });
+            continue;
+        }
+        let kind = classify_line(trimmed);
+        let kind = match kind {
+            LineKind::SectionHeader(_, _)
+            | LineKind::Blank
+            | LineKind::Noise(_)
+            | LineKind::Fretboard(_) => {
+                pending_chords = false;
+                kind
+            }
+            LineKind::ChordOnly(_) => {
+                pending_chords = true;
+                kind
+            }
+            LineKind::Lyric(_) | LineKind::Ambiguous(_) => {
+                if std::mem::take(&mut pending_chords) {
+                    LineKind::Lyric(trimmed.to_string())
+                } else {
+                    kind
+                }
+            }
+        };
+        classified.push(ClassifiedLine {
+            kind,
+            preamble: false,
+        });
+    }
+    classified
 }
 
 /// Fallback title: the first genuine lyric line of the song with its inline
@@ -1545,6 +1612,51 @@ D  A
             ("", "blank"),
         ] {
             assert_eq!(kind_name(line), expected, "regression on {line:?}");
+        }
+    }
+
+    /// Contextual classification must agree with the song `parse` builds: same
+    /// number of raw lines, and the same ambiguous lines (text and order) kept
+    /// in the body. Chord-followed text is `Lyric` in both views.
+    #[test]
+    fn contextual_classification_agrees_with_parse() {
+        let fixtures = [
+            "Song: Context Example\nArtist: Example Band\n\n[Verse]\nC       G\nfirst generic line\nAm      F\nsecond generic line\nodd line with no chord above\nDm      G\nthird generic line",
+            "[Verse]\n[Am]An inline chord line\nplain ambiguous line\nanother plain line",
+            "Title: Demo\nArtist: Demo Band\n[Intro]\nC  G\n\n[Verse]\nDm      F\nfirst generic line\n\nC       G\nsecond generic line",
+        ];
+        for raw in fixtures {
+            let classified = classify_lines(raw);
+            assert_eq!(
+                classified.len(),
+                raw.lines().count(),
+                "one classification per raw line for:\n{raw}"
+            );
+
+            let classified_ambiguous: Vec<&str> = classified
+                .iter()
+                .filter(|line| !line.preamble)
+                .filter_map(|line| match &line.kind {
+                    LineKind::Ambiguous(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            let song = parse(raw);
+            let parsed_ambiguous: Vec<&str> = song
+                .sections
+                .iter()
+                .flat_map(|section| section.lines.iter())
+                .filter_map(|line| match line {
+                    LineKind::Ambiguous(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            assert_eq!(
+                classified_ambiguous, parsed_ambiguous,
+                "contextual and parsed ambiguity diverged for:\n{raw}"
+            );
         }
     }
 

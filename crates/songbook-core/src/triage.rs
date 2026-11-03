@@ -1,7 +1,5 @@
 use crate::parser::chord::merge_chord_line;
-use crate::parser::classify::{
-    classify_line, metadata_provenance, preamble_len, section_kind_from_header,
-};
+use crate::parser::classify::{classify_lines, metadata_provenance, section_kind_from_header};
 use crate::parser::song::{LineKind, Section, SectionKind, Song};
 use crate::preview;
 use crate::transpose::transpose_song;
@@ -274,13 +272,13 @@ impl TriageState {
         let provenance = metadata_provenance(raw);
         let metadata =
             Metadata::from_song(&song, provenance.title_labelled, provenance.artist_labelled);
-        let preamble = preamble_len(raw);
+        let classified = classify_lines(raw);
         let lines: Vec<ReviewLine> = raw
             .lines()
-            .enumerate()
-            .map(|(index, line)| {
-                let kind = classify_line(line.trim());
-                let preamble = index < preamble;
+            .zip(classified)
+            .map(|(line, classified)| {
+                let kind = classified.kind;
+                let preamble = classified.preamble;
                 let flagged =
                     !preamble && matches!(kind, LineKind::Ambiguous(_) | LineKind::Fretboard(_));
                 ReviewLine {
@@ -745,6 +743,136 @@ mod tests {
                 "unedited rebuild drifted from parse for:\n{raw}"
             );
         }
+    }
+
+    #[test]
+    fn chord_over_lyrics_lines_are_kept_lyrics_not_flags() {
+        let raw = "\
+Song: Context Example
+Artist: Example Band
+
+[Verse]
+C       G
+first generic line
+Am      F
+second generic line
+odd parenthetical (side note)
+Dm      G
+third generic line
+";
+        let state = TriageState::new(parse(raw), raw);
+        for needle in [
+            "first generic line",
+            "second generic line",
+            "third generic line",
+        ] {
+            let line = &state.lines[flag_index(&state, needle)];
+            assert!(
+                matches!(line.kind, LineKind::Lyric(_)),
+                "{needle:?} should be classified as lyric, got {:?}",
+                line.kind
+            );
+            assert_eq!(line.verdict, Verdict::Keep, "{needle:?}");
+            assert!(!line.is_flag(), "{needle:?}");
+        }
+
+        let odd = &state.lines[flag_index(&state, "odd parenthetical")];
+        assert!(matches!(odd.kind, LineKind::Ambiguous(_)), "{:?}", odd.kind);
+        assert_eq!(odd.verdict, Verdict::Pending);
+        assert_eq!(state.flags.len(), 1);
+        assert_eq!(state.pending_flags(), 1);
+    }
+
+    #[test]
+    fn triage_ambiguous_count_matches_audit() {
+        let raw = "\
+Song: Context Example
+Artist: Example Band
+
+[Verse]
+C       G
+first generic line
+Am      F
+second generic line
+odd parenthetical (side note)
+Dm      G
+third generic line
+";
+        let state = TriageState::new(parse(raw), raw);
+        let triage_ambiguous = state
+            .lines
+            .iter()
+            .filter(|line| !line.preamble && matches!(line.kind, LineKind::Ambiguous(_)))
+            .count();
+        let summary = crate::audit::audit_summary_line(&parse(raw), raw);
+        assert_eq!(triage_ambiguous, 1);
+        assert_eq!(state.pending_flags(), triage_ambiguous);
+        assert!(summary.contains("1 ambiguous kept as lyric"), "{summary}");
+    }
+
+    #[test]
+    fn preamble_noise_metadata_and_section_kinds_flow_into_review_lines() {
+        let raw = "\
+Song: Demo Tune
+Artist: Demo Band
+Tabbed by: Example
+
+[Verse]
+F#m:   244222
+[Am]A generic line
+";
+        let state = TriageState::new(parse(raw), raw);
+
+        let title = &state.lines[flag_index(&state, "Song: Demo Tune")];
+        assert!(matches!(title.kind, LineKind::Noise(_)), "{:?}", title.kind);
+        assert!(title.preamble);
+        assert_eq!(title.verdict, Verdict::Keep);
+
+        let artist = &state.lines[flag_index(&state, "Artist: Demo Band")];
+        assert!(
+            matches!(artist.kind, LineKind::Noise(_)),
+            "{:?}",
+            artist.kind
+        );
+        assert!(artist.preamble);
+
+        let credit = &state.lines[flag_index(&state, "Tabbed by: Example")];
+        assert!(
+            matches!(credit.kind, LineKind::Noise(_)),
+            "{:?}",
+            credit.kind
+        );
+        assert!(credit.preamble);
+
+        let blank = state
+            .lines
+            .iter()
+            .find(|line| matches!(line.kind, LineKind::Blank))
+            .expect("expected a blank raw line");
+        assert!(blank.preamble);
+
+        let verse = &state.lines[flag_index(&state, "[Verse]")];
+        assert!(
+            matches!(verse.kind, LineKind::SectionHeader(SectionKind::Verse, _)),
+            "{:?}",
+            verse.kind
+        );
+        assert!(!verse.preamble);
+        assert_eq!(verse.verdict, Verdict::Keep);
+        assert!(!verse.is_flag());
+
+        let definition = &state.lines[flag_index(&state, "F#m:   244222")];
+        assert!(
+            matches!(definition.kind, LineKind::Noise(_)),
+            "{:?}",
+            definition.kind
+        );
+        assert!(!definition.preamble);
+
+        let lyric = &state.lines[flag_index(&state, "[Am]A generic line")];
+        assert!(matches!(lyric.kind, LineKind::Lyric(_)), "{:?}", lyric.kind);
+        assert_eq!(lyric.verdict, Verdict::Keep);
+        assert!(!lyric.is_flag());
     }
 
     #[test]

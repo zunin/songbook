@@ -234,9 +234,15 @@ mod tests {
         assert_eq!(parts.chords, ["Am", "D", "G"]);
 
         // Discarding the chord-only line removes its chords from the part.
+        // The chord-followed text line is contextually a lyric (not a flag), so
+        // navigate explicitly to the chord line instead of relying on flags.
         let mut session = Session::new(raw).unwrap();
         session.handle_action("confirm").unwrap();
-        session.handle_action("prev").unwrap(); // onto "D  G  2x"
+        let chord_index = index_of(&session.snapshot(), "D  G  2x");
+        for _ in 0..chord_index {
+            session.handle_action("next").unwrap();
+        }
+        assert_eq!(session.snapshot().position, chord_index);
         session.handle_action("discard").unwrap();
         let parts = session.book_parts().unwrap();
         assert_eq!(parts.chords, ["Am"]);
