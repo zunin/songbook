@@ -1,0 +1,144 @@
+Synthetic Tab Songbook
+Songbook Project
+
+1
+
+Index of Songs
+Accompaniment Study . . . . . . . . . . . 1
+Literal String Study . . . . . . . . . . . . . 2
+Reviewed String Study . . . . . . . . . . . 3
+
+2
+
+1
+
+Accompaniment Study
+Synthetic Fixture
+
+Key: G
+
+G D Em C
+2x
+*
+
+G
+
+1.
+
+D
+
+First words lead to the strings
+
+Em
+
+C
+
+Pure chord and lyric coverage still remains
+
+C
+
+D
+
+G
+
+Em
+
+Keep the words in their order
+Hear the paper not a tune
+
+G
+
+This song has no tablature
+*
+
+3
+
+2
+
+Literal String Study
+Synthetic Fixture
+
+Key: C
+
+C G
+2x
+*
+
+C
+
+1.
+
+Before the first six strings
+e|--0--12h14p12--/7--\5--~--^--x--(9)--------------|
+B|--1--\end{songs}%\input{never-read}--------------|
+G|--2--{}--&--%--$--#--_--^--~--\------------------|
+D|--3--'--`--"--!--?--:--;--+--=--<-->-------------|
+A|--4-- 5-6--7b9r7--8s10l8--v-----------------|
+E|--5--[7]--(8)--9/11--12\10--*--------------------|
+
+F
+
+After the first six strings
+
+G
+
+Before the alternate labels
+D#|--10--12--14--|
+Bb|--11--13--15--|
+F#|--12--14--16--|
+Db|--13--15--17--|
+Ab|--14--16--18--|
+Eb|--15--17--19--|
+
+C
+
+After the alternate labels
+
+4
+
+G
+
+Before the alternate labels
+D#|--20--22--24--|
+Bb|--21--23--25--|
+F#|--22--24--26--|
+Db|--23--25--27--|
+Ab|--24--26--28--|
+Eb|--25--27--29--|
+
+C
+
+After the alternate labels
+
+Am
+
+After both distinct choruses
+*
+
+3
+
+Reviewed String Study
+Synthetic Fixture
+
+Chord transposition is active; ASCII tabs are unchanged and may no longer
+match.
+
+D
+
+1. Before the reviewed strings
+Partial six-string tab block: 5 retained rows; source line 6.
+e|--21-B|--22-D|--24-A|--25-E|--26--
+
+31--|
+32--|
+34--|
+35--|
+36--|
+
+A
+
+After the reviewed strings
+
+5
+
+

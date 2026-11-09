@@ -1,0 +1,39 @@
+Song: Literal String Study
+Artist: Synthetic Fixture
+Key: C
+
+[Intro]
+C  G  2x
+
+[Verse]
+[C]Before the first six strings
+  e|--0--12h14p12--/7--\5--~--^--x--(9)--------------|  
+  B|--1--\end{songs}%\input{never-read}--------------|  
+  G|--2--{}--&--%--$--#--_--^--~--\------------------|  
+  D|--3--'--`--"--!--?--:--;--+--=--<-->-------------|  
+  A|--4--  5--   6--7b9r7--8s10l8--v-----------------|  
+  E|--5--[7]--(8)--9/11--12\10--*--------------------|  
+[F]After the first six strings
+
+[Chorus]
+[G]Before the alternate labels
+  D#|--10--12--14--|  
+  Bb|--11--13--15--|  
+  F#|--12--14--16--|  
+  Db|--13--15--17--|  
+  Ab|--14--16--18--|  
+  Eb|--15--17--19--|  
+[C]After the alternate labels
+
+[Chorus]
+[G]Before the alternate labels
+  D#|--20--22--24--|  
+  Bb|--21--23--25--|  
+  F#|--22--24--26--|  
+  Db|--23--25--27--|  
+  Ab|--24--26--28--|  
+  Eb|--25--27--29--|  
+[C]After the alternate labels
+
+[Outro]
+[Am]After both distinct choruses

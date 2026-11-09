@@ -1,0 +1,34 @@
+1        Annotated String Study
+         Synthetic Fixture
+
+
+
+
+Key: D
+
+
+     D
+1.   Before the annotated six strings
+  Play softly, then let the final notes ring
+ (C)         (Csus2)       (G)
+  C    or   Csus2          G
+  e|--0--12h14-- 20--22--24--|
+  B|--1--13p11-- 21--23--25--|
+  G|--2--14/16-- 22--24--26--|
+  D|--3--15\13-- 23--25--27--|
+  A|--4--16b18-- 24--26--28--|
+  E|--5--17r15-- 25--27--29--|
+     A
+     After the annotated six strings
+
+
+ D
+ Ordinary chord and lyric material stays later
+ A
+ No annotation is counted as another string
+
+
+
+
+                                        1
+

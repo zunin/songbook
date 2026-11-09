@@ -3,7 +3,11 @@
 // fonts compile the standalone songs fixture in the GlyphTeX engine and
 // produce the same PDF text as the native Tectonic reference.
 // Usage: node smoke-node.mjs <assets-dir> <fixtures-dir>
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from "node:fs";
+import assert from "node:assert/strict";
+import { tabFixtures } from "./tab-fixtures.mjs";
+import { annotatedTabFixtures } from "./annotated-tab-fixtures.mjs";
+import { assertTabTex, assertTabPdf, assertMixedOrder, assertAnnotatedOrder } from "./tab-pdf-assertions.mjs";
 import { execFileSync } from "node:child_process";
 import { join, basename, resolve } from "node:path";
 // The vendored engine's imports use the WebCrypto `crypto` global (WASM
@@ -15,6 +19,10 @@ import { pathToFileURL } from "node:url";
 
 const assetsDir = resolve(process.argv[2]);
 const fixturesDir = process.argv[3];
+const outputDir = resolve(process.env.PDF_SMOKE_OUT || "/tmp/opencode/pdf-engine-smoke");
+mkdirSync(outputDir, { recursive: true });
+const standalonePdfPath = join(outputDir, "let-it-be-worker.pdf");
+const bookPdfPath = join(outputDir, "demo-book-worker.pdf");
 
 // 1. load the vendored engine from the built assets
 const engineMod = await import(new URL(`file://${assetsDir}/engine/index.js`).href);
@@ -72,10 +80,10 @@ if (!pdf || result.status !== "spotless") {
 }
 
 // 6. compare extracted text against the pinned native reference
-writeFileSync("/tmp/pdf-engine-smoke-out.pdf", pdf);
-const got = execFileSync("pdftotext", ["/tmp/pdf-engine-smoke-out.pdf", "-"]).toString();
+writeFileSync(standalonePdfPath, pdf);
+const got = execFileSync("pdftotext", [standalonePdfPath, "-"]).toString();
 const want = readFileSync(`${fixturesDir}/let-it-be-reference.txt`, "utf8");
-if (got.trim() !== want.trim()) {
+if (got !== want) {
   console.error("smoke: PDF text differs from native reference");
   process.exit(1);
 }
@@ -126,7 +134,7 @@ function workerRequest(msg, timeoutMs = 300000) {
     const poll = () => {
       while (workerMessages.length > start) {
         const m = workerMessages.shift();
-        if (["ready", "result", "poisoned", "error"].includes(m.type)) {
+        if (["ready", "result", "disposed", "poisoned", "error"].includes(m.type)) {
           clearTimeout(timer);
           resolve(m);
           return;
@@ -140,10 +148,25 @@ function workerRequest(msg, timeoutMs = 300000) {
 }
 
 const initMsg = await workerRequest({ type: "init" });
+assert.equal(initMsg.type, "ready", `worker init: ${initMsg.message || initMsg.type}`);
 console.log(`smoke: worker ready (init ${Math.round(initMsg.timings.totalInitMs)} ms)`);
 
+// Keep the direct-engine gate above, and also verify the historical pure
+// chord/lyric standalone through the deployed worker's actual compile path.
+const singleMsg = await workerRequest({ type: "compile", id: 1, tex, jobname: "main" });
+assert.equal(singleMsg.type, "result", `standalone worker: ${singleMsg.message || singleMsg.type}`);
+assert(singleMsg.bytes && singleMsg.status === "spotless", "standalone worker compile must be spotless");
+assert.deepEqual(singleMsg.missingFiles || [], [], "standalone worker must have no missing inputs");
+writeFileSync(standalonePdfPath, singleMsg.bytes);
+assert.equal(execFileSync("pdftotext", [standalonePdfPath, "-"]).toString(), want,
+  "standalone deployed-worker PDF text must exactly match the unchanged native reference");
+console.log(`smoke: standalone worker PASS status=spotless pdf=${singleMsg.bytes.length} B text=byte-exact-vs-native`);
+// Native references use fresh processes; reset the engine before the book.
+assert.equal((await workerRequest({ type: "dispose" })).type, "disposed");
+assert.equal((await workerRequest({ type: "init" })).type, "ready");
+
 const tb0 = Date.now();
-const bookMsg = await workerRequest({ type: "compile", id: 1, tex: bookTex, jobname: "main" });
+const bookMsg = await workerRequest({ type: "compile", id: 2, tex: bookTex, jobname: "main" });
 const bookMs = Date.now() - tb0;
 if (bookMsg.type !== "result") {
   console.error(`smoke: book FAILED (${bookMsg.type})`, bookMsg.message || "");
@@ -162,8 +185,9 @@ if (!bookPdf || bookMsg.status !== "spotless") {
   process.exit(1);
 }
 
-writeFileSync("/tmp/pdf-engine-smoke-book.pdf", bookPdf);
-const bookText = execFileSync("pdftotext", ["/tmp/pdf-engine-smoke-book.pdf", "-"]).toString();
+assert.deepEqual(bookMissing, [], "pure chord/lyric book must have no missing inputs");
+writeFileSync(bookPdfPath, bookPdf);
+const bookText = execFileSync("pdftotext", [bookPdfPath, "-"]).toString();
 
 // pdftotext emits one form feed (\f) after every page, including the last
 // (verified empirically: the 1-page let-it-be fixture yields exactly 1 \f at
@@ -173,7 +197,7 @@ const bookPages = (bookText.match(/\f/g) || []).length;
 // Secondary cross-check of that convention with pdfinfo when it is installed.
 let pdfinfoPages = null;
 try {
-  const info = execFileSync("pdfinfo", ["/tmp/pdf-engine-smoke-book.pdf"]).toString();
+  const info = execFileSync("pdfinfo", [bookPdfPath]).toString();
   const m = info.match(/^Pages:\s+(\d+)\s*$/m);
   if (m) pdfinfoPages = parseInt(m[1], 10);
 } catch (err) {
@@ -192,7 +216,7 @@ if (pdfinfoPages !== null) {
 
 // The primary gate: byte-exact text against the native three-step reference
 // (same comparison as the let-it-be native reference above).
-if (bookText.trim() !== wantBookText.trim()) {
+if (bookText !== wantBookText) {
   const gotLines = bookText.trim().split("\n");
   const wantLines = wantBookText.trim().split("\n");
   let firstDiff = -1;
@@ -217,3 +241,60 @@ if (bookText.trim() !== wantBookText.trim()) {
 console.log("smoke: book PDF text matches native three-step reference (songidx pipeline) — byte-exact");
 
 console.log(`smoke: book PASS status=spotless pages=${bookPages} index=byte-exact-vs-native`);
+
+// 8. Retained literal six-string tabs, rendered freshly via the public Session
+// API. Compile the committed, byte-identical TeX through the DEPLOYED worker,
+// including book index passes, rather than handcoding candidate TeX. Each
+// reference is a fresh native process, so reset the worker engine between
+// fixtures too (PDF font-subset bounding boxes can depend on earlier jobs).
+const tabs = await tabFixtures(resolve(assetsDir, ".."), fixturesDir);
+const groups = [0, 6, 12].map((start) => tabs.originalRows.slice(start, start + 6));
+const annotated = await annotatedTabFixtures(resolve(assetsDir, ".."), fixturesDir);
+const cases = [...tabs.outputs].map(([name, tex]) => {
+  const label = basename(name, ".tex");
+  const book = label === "synthetic-tab-book";
+  return { label, tex, book, groups: book ? [...groups, tabs.partialRows] : groups, pages: book ? 5 : 2 };
+});
+cases.push(...annotated.cases);
+let requestId = 3;
+for (const fixture of cases) {
+  const { label, tex: freshTex } = fixture;
+  const name = `${label}.tex`;
+  const fixtureTex = readFileSync(join(fixturesDir, name), "utf8");
+  assert.equal(fixtureTex, freshTex, `${name}: stale core-rendered TeX (see fixtures/README.md)`);
+  const expectedRows = fixture.groups.flat();
+  assertTabTex(fixtureTex, expectedRows);
+  assert.equal((await workerRequest({ type: "dispose" })).type, "disposed");
+  assert.equal((await workerRequest({ type: "init" })).type, "ready");
+  const t = Date.now();
+  const msg = await workerRequest({ type: "compile", id: requestId++, tex: fixtureTex, jobname: "main" });
+  assert.equal(msg.type, "result", `${label}: worker ${msg.type}: ${msg.message || ""}`);
+  assert(msg.bytes && msg.status === "spotless", `${label}: compile failed: ${JSON.stringify({ status: msg.status, diagnostics: msg.diagnostics })}`);
+  // kpathsea first probes optional Omega metrics before using the pinned
+  // cmtt10.tfm. The worker currently exposes these two probes as missing; do
+  // not broaden its production normalization here or ignore any other input.
+  assert(packFiles.has("cmtt10.tfm") && packFiles.has("cmtt10.pfb"), "pinned cmtt10 metrics and glyphs are supplied");
+  const optionalOfm = new Set(["cmtt10.ofm", "cmtt10.ofm.ofm"]);
+  const missingInputs = msg.missingFiles || [];
+  assert.deepEqual(missingInputs.filter((name) => !optionalOfm.has(name)), [], `${label}: no missing inputs other than optional cmtt10 OFM probes`);
+  if (missingInputs.length) console.log(`smoke: ${label} optional metric probes (TFM supplied): ${missingInputs.join(", ")}`);
+  const pdfPath = join(outputDir, `${label}-worker.pdf`);
+  writeFileSync(pdfPath, msg.bytes);
+  const text = execFileSync("pdftotext", [pdfPath, "-"]).toString();
+  const layout = execFileSync("pdftotext", ["-layout", pdfPath, "-"]).toString();
+  const bbox = execFileSync("pdftotext", ["-bbox-layout", pdfPath, "-"]).toString();
+  writeFileSync(join(outputDir, `${label}-worker.txt`), text);
+  writeFileSync(join(outputDir, `${label}-worker-layout.txt`), layout);
+  writeFileSync(join(outputDir, `${label}-worker-bbox.html`), bbox);
+  // Exact means every byte: do not trim form feeds, trailing LF, or spaces.
+  assert.equal(text, readFileSync(join(fixturesDir, `${label}-reference.txt`), "utf8"), `${label}: PDF text vs ACTUAL native reference`);
+  assert.equal(layout, readFileSync(join(fixturesDir, `${label}-layout-reference.txt`), "utf8"), `${label}: layout text vs ACTUAL native reference`);
+  if (fixture.annotations) assertAnnotatedOrder(layout, fixture);
+  else assertMixedOrder(layout, fixture.book);
+  const pages = assertTabPdf(layout, bbox, fixture.groups);
+  assert.equal(pages, fixture.pages, `${label}: reviewed page/block layout`);
+  const roles = fixture.annotations ? ` strings=${fixture.strings} annotations=${fixture.annotations} split=${fixture.split}` : "";
+  console.log(`smoke: ${label} PASS status=spotless pages=${pages} rows=${expectedRows.length}${roles} pdf=${msg.bytes.length} B compile=${Date.now() - t} ms text+layout=byte-exact-vs-native glyphs+spaces+blocks=verified`);
+}
+assert.equal((await workerRequest({ type: "dispose" })).type, "disposed");
+console.log(`smoke: full standalone/book/tab/annotation/split verification PASS (PDFs: ${outputDir})`);

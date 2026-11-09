@@ -1,0 +1,98 @@
+Synthetic Annotated Songbook
+Songbook Project
+
+1
+
+Index of Songs
+Accompaniment Study . . . . . . . . . . . 1
+Annotated String Study . . . . . . . . . . 2
+
+2
+
+1
+
+Accompaniment Study
+Synthetic Fixture
+
+Key: G
+
+G D Em C
+2x
+*
+
+G
+
+1.
+
+D
+
+First words lead to the strings
+
+Em
+
+C
+
+Pure chord and lyric coverage still remains
+
+C
+
+D
+
+G
+
+Em
+
+Keep the words in their order
+Hear the paper not a tune
+
+G
+
+This song has no tablature
+*
+
+3
+
+2
+
+Annotated String Study
+Synthetic Fixture
+
+Key: D
+
+D
+
+1.
+
+Before the annotated six strings
+
+Play softly, then le
+(C)
+(Csus2)
+C
+or
+Csus2
+e|--0--12h14-- 20-B|--1--13p11-- 21-G|--2--14/16-- 22-D|--3--15\13-- 23-A|--4--16b18-- 24-E|--5--17r15-- 25-t the final notes ring
+(G)
+G
+e|22--24--|
+B|23--25--|
+G|24--26--|
+D|25--27--|
+A|26--28--|
+E|27--29--|
+
+A
+
+After the annotated six strings
+
+D
+
+Ordinary chord and lyric material stays later
+
+A
+
+No annotation is counted as another string
+
+4
+
+

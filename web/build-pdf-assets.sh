@@ -223,9 +223,29 @@ printf '{"type": "module"}\n' > "$ASSETS/package.json"
 cp "$SRC/pdf-engine.js" "$ASSETS/pdf-engine.js"
 cp "$SRC/pdf-worker.js" "$ASSETS/pdf-worker.js"
 cp "$SRC/pdf/test/index.html" "$ASSETS/test/index.html"
+cp "$SRC/pdf/test/smoke-node.mjs" "$SRC/pdf/test/tab-fixtures.mjs" \
+  "$SRC/pdf/test/annotated-tab-fixtures.mjs" "$SRC/pdf/test/tab-pdf-assertions.mjs" "$ASSETS/test/"
 cp "$SRC/pdf/test/fixtures/let-it-be.tex" "$ASSETS/test/fixtures/"
 cp "$SRC/pdf/test/fixtures/let-it-be-reference.txt" "$ASSETS/test/fixtures/"
 cp "$SRC/pdf/test/fixtures/let-it-be-wasm.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/demo-book.tex" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/demo-book-reference.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-tabs.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-partial-tabs.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-accompaniment.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-tabs.tex" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-tabs-reference.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-tabs-layout-reference.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-tab-book.tex" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-tab-book-reference.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-tab-book-layout-reference.txt" "$ASSETS/test/fixtures/"
+cp "$SRC/pdf/test/fixtures/synthetic-annotated-tabs.txt" "$ASSETS/test/fixtures/"
+for fixture in synthetic-annotated-tabs synthetic-annotated-tabs-split synthetic-annotated-tab-book; do
+  cp "$SRC/pdf/test/fixtures/$fixture.tex" \
+    "$SRC/pdf/test/fixtures/$fixture-reference.txt" \
+    "$SRC/pdf/test/fixtures/$fixture-layout-reference.txt" "$ASSETS/test/fixtures/"
+done
+cp "$SRC/pdf/test/fixtures/README.md" "$ASSETS/test/fixtures/"
 cp "$SRC/pdf/pinned-hashes.txt" "$ASSETS/pinned-hashes.txt"
 
 # --- 8. optional node smoke test -----------------------------------------------

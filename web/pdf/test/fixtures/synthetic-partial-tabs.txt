@@ -1,0 +1,12 @@
+Song: Reviewed String Study
+Artist: Synthetic Fixture
+
+[Verse]
+[C]Before the reviewed strings
+  e|--21--  31--|  
+  B|--22--  32--|  
+  G|--23--  33--|  
+  D|--24--  34--|  
+  A|--25--  35--|  
+  E|--26--  36--|  
+[G]After the reviewed strings
