@@ -2,7 +2,11 @@ use crate::parser::chord::merge_chord_line;
 use crate::parser::classify::{classify_lines, metadata_provenance, section_kind_from_header};
 use crate::parser::song::{LineKind, Section, SectionKind, Song};
 use crate::preview;
+use crate::tablature::{
+    self, TabProvenance, TabRowRole, TabSplitBounds, TabSplitPreview, TabSplitRow, MAX_COLUMNS,
+};
 use crate::transpose::transpose_song;
+use anyhow::{bail, Result};
 
 const METADATA_FIELD_COUNT: usize = 5;
 const PREVIEW_PAGE: usize = 10;
@@ -41,6 +45,9 @@ pub enum Key {
     ChordOnly,
     SectionHeader,
     Noise,
+    /// Explicitly keep the selected adjacent row as a literal tab annotation
+    /// and associate it with the following complete original six-string block.
+    TabAnnotation,
     Edit,
     Undo,
     AutoAccept,
@@ -60,6 +67,8 @@ pub enum Key {
     TransposeUp,
     TransposeDown,
     TransposeReset,
+    PanLeft,
+    PanRight,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -155,8 +164,12 @@ fn transpose_message(offset: i32) -> String {
 }
 
 /// One raw input line plus its review decision (ADR0014).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewLine {
+    /// Stable one-based input location, shared by split descendants.
+    source_line: usize,
+    /// Assigned once at construction; splitting changes only child instance.
+    tab: Option<TabProvenance>,
     /// The original input line, exactly as parsed.
     pub original: String,
     /// The classifier's kind for this line.
@@ -170,6 +183,14 @@ pub struct ReviewLine {
 }
 
 impl ReviewLine {
+    pub fn source_line(&self) -> usize {
+        self.source_line
+    }
+
+    pub fn tab_provenance(&self) -> Option<TabProvenance> {
+        self.tab
+    }
+
     /// Text used for review and rebuild (edited text when present).
     pub fn text(&self) -> &str {
         self.edited.as_deref().unwrap_or(&self.original)
@@ -188,7 +209,7 @@ impl ReviewLine {
                 text,
             )),
             Verdict::Keep | Verdict::Pending => {
-                if self.preamble {
+                if self.preamble && !matches!(self.kind, LineKind::TabAnnotation(_)) {
                     return None;
                 }
                 match &self.kind {
@@ -196,7 +217,8 @@ impl ReviewLine {
                     LineKind::Ambiguous(_) => Some(LineKind::Lyric(text)),
                     LineKind::Lyric(_) => Some(LineKind::Lyric(text)),
                     LineKind::ChordOnly(_) => Some(LineKind::ChordOnly(raw_text)),
-                    LineKind::Fretboard(_) => Some(LineKind::Fretboard(text)),
+                    LineKind::Fretboard(_) => Some(LineKind::Fretboard(raw_text)),
+                    LineKind::TabAnnotation(_) => Some(LineKind::TabAnnotation(raw_text)),
                     LineKind::SectionHeader(kind, _) => {
                         Some(LineKind::SectionHeader(kind.clone(), text))
                     }
@@ -253,6 +275,7 @@ pub fn line_kind_label(kind: &LineKind) -> &'static str {
         LineKind::ChordOnly(_) => "chord-only",
         LineKind::SectionHeader(_, _) => "section header",
         LineKind::Fretboard(_) => "fretboard",
+        LineKind::TabAnnotation(_) => "tab annotation",
         LineKind::Noise(_) => "noise",
         LineKind::Blank => "blank",
         LineKind::Ambiguous(_) => "ambiguous",
@@ -274,12 +297,31 @@ pub fn section_label(kind: &SectionKind) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Snapshot {
     metadata: Metadata,
     metadata_field: usize,
     lines: Vec<ReviewLine>,
     position: usize,
+    phase: Phase,
+    preview_scroll: usize,
+    horizontal_scroll: u16,
+}
+
+/// A staged, core-generated split. Its validation state and replacement data
+/// are private: UI adapters can inspect the preview but cannot supply rows to
+/// apply. Dropping a plan cancels without changing review or undo history.
+#[derive(Debug, Clone)]
+pub struct TabSplitPlan {
+    preview: TabSplitPreview,
+    expected: Snapshot,
+    revision: u64,
+}
+
+impl TabSplitPlan {
+    pub fn preview(&self) -> &TabSplitPreview {
+        &self.preview
+    }
 }
 
 #[derive(Debug)]
@@ -296,11 +338,16 @@ pub struct TriageState {
     pub edit_buffer: String,
     pub message: Option<String>,
     pub preview_scroll: usize,
+    pub horizontal_scroll: u16,
     /// Net transposition in semitones applied on top of the triaged song.
     /// Delta-accumulated (like the web `Session::transpose`) and deliberately
     /// not part of the undo stack; `TransposeReset` is the way back.
     pub transpose: i32,
     undo: Vec<Snapshot>,
+    /// Monotonic even across undo; prevents a reverted edit/selection accepting
+    /// an old plan. Snapshot comparison also detects direct public-field edits.
+    review_revision: u64,
+    next_tab_instance: usize,
 }
 
 impl TriageState {
@@ -309,15 +356,21 @@ impl TriageState {
         let metadata =
             Metadata::from_song(&song, provenance.title_labelled, provenance.artist_labelled);
         let classified = classify_lines(raw);
+        let original: Vec<_> = classified.iter().map(|c| c.kind.clone()).collect();
+        let tab_provenance = tablature::source_provenance(&original);
         let lines: Vec<ReviewLine> = raw
             .lines()
             .zip(classified)
-            .map(|(line, classified)| {
+            .zip(tab_provenance)
+            .enumerate()
+            .map(|(index, ((line, classified), tab))| {
                 let kind = classified.kind;
                 let preamble = classified.preamble;
                 let flagged =
                     !preamble && matches!(kind, LineKind::Ambiguous(_) | LineKind::Fretboard(_));
                 ReviewLine {
+                    source_line: index + 1,
+                    tab,
                     original: line.to_string(),
                     kind,
                     preamble,
@@ -337,6 +390,7 @@ impl TriageState {
             .map(|(index, _)| index)
             .collect();
         let position = flags.first().copied().unwrap_or(0);
+        let next_tab_instance = lines.len();
         Self {
             metadata,
             metadata_field: 0,
@@ -348,8 +402,11 @@ impl TriageState {
             edit_buffer: String::new(),
             message: None,
             preview_scroll: 0,
+            horizontal_scroll: 0,
             transpose: 0,
             undo: Vec::new(),
+            review_revision: 0,
+            next_tab_instance,
         }
     }
 
@@ -359,6 +416,300 @@ impl TriageState {
 
     fn current_line_mut(&mut self) -> Option<&mut ReviewLine> {
         self.lines.get_mut(self.position)
+    }
+
+    /// Eligibility and numeric bounds for thin review UIs. Errors explain why
+    /// this current instance cannot be split, including unworkable prefixes.
+    /// Only complete, contiguous original-six instances qualify. Any retained
+    /// annotations must form the immediate, complete prefix above the strings.
+    pub fn tab_split_bounds(&self) -> Result<TabSplitBounds> {
+        if self.phase != Phase::Triage || self.editing {
+            bail!(
+                "Return to line review and finish or cancel editing before splitting a tab block."
+            );
+        }
+        let Some(source) = self.current_line().and_then(|line| line.tab) else {
+            bail!("Select a row in a complete original six-string tab block to split.");
+        };
+        if source.original_rows() != 6 {
+            bail!("Cannot split an original {}-row tab run: only complete original six-string blocks are supported.", source.original_rows());
+        }
+        let indices: Vec<_> = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| {
+                line.tab.is_some_and(|tab| {
+                    tab.origin() == source.origin() && tab.instance() == source.instance()
+                })
+            })
+            .map(|(index, _)| index)
+            .collect();
+        let string_indices: Vec<_> = indices
+            .iter()
+            .copied()
+            .filter(|index| {
+                self.lines[*index]
+                    .tab
+                    .is_some_and(|tab| tab.role() == TabRowRole::String)
+            })
+            .collect();
+        let Some(&string_start) = string_indices.first() else {
+            bail!("Cannot split retained annotations without all six string rows; restore the complete block first.");
+        };
+        if string_indices.len() != 6
+            || string_indices
+                .iter()
+                .enumerate()
+                .any(|(row, index)| *index != string_start + row)
+        {
+            bail!("Cannot split a partial or noncontiguous tab instance; restore all six original string rows first.");
+        }
+        let annotation_count = indices.len() - 6;
+        let start = string_start.checked_sub(annotation_count).ok_or_else(|| {
+            anyhow::anyhow!("Cannot split an annotation prefix detached from its six string rows.")
+        })?;
+        if indices
+            .iter()
+            .enumerate()
+            .any(|(row, index)| *index != start + row)
+        {
+            bail!("Cannot split a partial or noncontiguous tab instance; annotations must immediately precede all six string rows.");
+        }
+        let mut prefix_columns = 0;
+        let mut max_row_columns = 0;
+        let mut seen_strings = [false; 6];
+        let mut seen_annotations = vec![false; annotation_count];
+        for line in &self.lines[start..start + 6 + annotation_count] {
+            let tab = line.tab.expect("instance rows have provenance");
+            let ordinal = tab.original_row();
+            if tab.original_rows() != 6 || ordinal == 0 {
+                bail!("Cannot split a tab instance without valid original row ordinals.");
+            }
+            match tab.role() {
+                TabRowRole::String => {
+                    if !(1..=6).contains(&ordinal) || seen_strings[ordinal - 1] {
+                        bail!(
+                            "Cannot split a tab instance without six unique original row ordinals."
+                        );
+                    }
+                    seen_strings[ordinal - 1] = true;
+                    if line.preamble
+                        || !matches!(line.effective_kind(), Some(LineKind::Fretboard(_)))
+                    {
+                        bail!("Cannot split a partial or reclassified tab instance; restore all six rows as fretboard first.");
+                    }
+                    let Some(pipe) = line.text().find('|') else {
+                        bail!("Cannot split source line {}: restore its label and first pipe before splitting.", line.source_line());
+                    };
+                    prefix_columns = prefix_columns.max(pipe + 1);
+                }
+                TabRowRole::Annotation => {
+                    if ordinal > annotation_count || seen_annotations[ordinal - 1] {
+                        bail!(
+                            "Cannot split a tab instance without unique annotation-row ordinals."
+                        );
+                    }
+                    seen_annotations[ordinal - 1] = true;
+                    if !matches!(line.effective_kind(), Some(LineKind::TabAnnotation(_))) {
+                        bail!("Cannot split a partial or reclassified tab instance; restore every associated annotation first.");
+                    }
+                }
+            }
+            let text = line.text();
+            if !text.bytes().all(|byte| (32..=126).contains(&byte)) {
+                bail!("Cannot split source line {}: only printable ASCII is supported. Replace tabs/control or Unicode characters with ordinary ASCII before splitting.", line.source_line());
+            }
+            max_row_columns = max_row_columns.max(text.len());
+        }
+        if prefix_columns >= MAX_COLUMNS {
+            bail!("Cannot split: longest indentation/label/first-pipe prefix occupies {prefix_columns} columns; it must be shorter than {MAX_COLUMNS}. Shorten indentation or labels first.");
+        }
+        let min_after_column = prefix_columns + 1;
+        let max_after_column = MAX_COLUMNS.min(max_row_columns.saturating_sub(1));
+        if min_after_column > max_after_column {
+            bail!("Cannot split: no notation remains beyond a valid cut after the {prefix_columns}-column prefix. Edit the block or select a longer instance.");
+        }
+        Ok(TabSplitBounds {
+            start,
+            end: start + 6 + annotation_count,
+            annotation_count,
+            source_line: source.origin() + 1,
+            origin: source.origin(),
+            instance: source.instance(),
+            prefix_columns,
+            max_row_columns,
+            min_after_column,
+            max_after_column,
+        })
+    }
+
+    /// Stage a split after one-based raw column N: P < N <= 56 and N < the
+    /// longest current row. This is literal slicing, not a musical operation.
+    /// Planning/preview/cancellation never change review state or undo history.
+    pub fn plan_tab_split(&self, after_column: usize) -> Result<TabSplitPlan> {
+        let bounds = self.tab_split_bounds()?;
+        if !(bounds.min_after_column..=bounds.max_after_column).contains(&after_column) {
+            bail!("Split after raw column {} through {} inclusive (including indentation, label and first pipe); requested {after_column}.", bounds.min_after_column, bounds.max_after_column);
+        }
+        let annotations = self.lines[bounds.start..bounds.start + bounds.annotation_count]
+            .iter()
+            .map(|line| {
+                let text = line.text();
+                let left = text[..after_column.min(text.len())].to_string();
+                // An annotation has no repeated source-text prefix. Its right
+                // suffix starts after the same raw cut using only enough spaces
+                // to match the right strings' widest repeated label/pipe prefix.
+                let prefix = String::new();
+                let padding_columns = bounds.prefix_columns;
+                let right = format!(
+                    "{}{}",
+                    " ".repeat(padding_columns),
+                    text.get(after_column..).unwrap_or("")
+                );
+                TabSplitRow {
+                    source_line: line.source_line(),
+                    original_row: line
+                        .tab
+                        .expect("bounds validated annotation provenance")
+                        .original_row(),
+                    original_columns: text.len(),
+                    prefix,
+                    padding_columns,
+                    left_columns: left.len(),
+                    right_columns: right.len(),
+                    right_label_only: text.len() <= after_column,
+                    left,
+                    right,
+                }
+            })
+            .collect::<Vec<_>>();
+        let rows = std::array::from_fn(|row| {
+            let line = &self.lines[bounds.start + bounds.annotation_count + row];
+            let text = line.text();
+            let prefix_end = text.find('|').expect("bounds validated first pipe") + 1;
+            let prefix = text[..prefix_end].to_string();
+            let padding_columns = bounds.prefix_columns - prefix_end;
+            let left = text[..after_column.min(text.len())].to_string();
+            let right = format!(
+                "{prefix}{}{}",
+                " ".repeat(padding_columns),
+                text.get(after_column..).unwrap_or("")
+            );
+            TabSplitRow {
+                source_line: line.source_line(),
+                original_row: line
+                    .tab
+                    .expect("bounds validated provenance")
+                    .original_row(),
+                original_columns: text.len(),
+                prefix,
+                padding_columns,
+                left_columns: left.len(),
+                right_columns: right.len(),
+                right_label_only: text.len() <= after_column,
+                left,
+                right,
+            }
+        });
+        let mut warnings = vec![
+            tablature::SPLIT_NOTATION_WARNING.into(),
+            tablature::SPLIT_PREFIX_WARNING.into(),
+        ];
+        if !annotations.is_empty() {
+            warnings.push(tablature::SPLIT_ANNOTATION_WARNING.into());
+        }
+        if rows.iter().any(|row| row.right_label_only) {
+            warnings.push(tablature::SPLIT_LABEL_ONLY_WARNING.into());
+        }
+        if rows
+            .iter()
+            .chain(&annotations)
+            .any(|row| row.right_columns > MAX_COLUMNS)
+        {
+            warnings.push(tablature::SPLIT_RIGHT_WARNING.into());
+        }
+        Ok(TabSplitPlan {
+            preview: TabSplitPreview {
+                bounds,
+                after_column,
+                annotations,
+                rows,
+                warnings,
+            },
+            expected: self.snapshot(),
+            revision: self.review_revision,
+        })
+    }
+
+    /// Atomically replace the block with left annotations/six strings followed
+    /// by right annotations/six strings. Focus moves to the first right row for
+    /// repeated splitting. Original text,
+    /// classifier, verdict, preamble and source identity are copied unchanged;
+    /// generated text lives only in `edited`. Records exactly one undo snapshot.
+    /// Plans become stale after review actions (including navigation or undo),
+    /// or direct changes to the captured lines/position/metadata/view state.
+    /// Transposition alone remains nonundoable and does not invalidate a plan.
+    pub fn apply_tab_split(&mut self, plan: TabSplitPlan) -> Result<()> {
+        if self.editing || plan.revision != self.review_revision || plan.expected != self.snapshot()
+        {
+            bail!("Tab split plan is stale; preview the current block again before applying.");
+        }
+        let left_instance = self.next_tab_instance;
+        let right_instance = left_instance
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("Tab instance identity exhausted."))?;
+        let next_instance = right_instance
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("Tab instance identity exhausted."))?;
+        let preview = plan.preview;
+        let originals = &self.lines[preview.bounds.start..preview.bounds.end];
+        let annotation_count = preview.bounds.annotation_count;
+        let original_annotations = &originals[..annotation_count];
+        let original_strings = &originals[annotation_count..];
+        let mut replacements = Vec::with_capacity(originals.len() * 2);
+        for (instance, right) in [(left_instance, false), (right_instance, true)] {
+            for (line, row) in original_annotations.iter().zip(&preview.annotations) {
+                let mut fragment = line.clone();
+                fragment.tab = fragment.tab.map(|tab| tab.in_instance(instance));
+                fragment.edited = Some(if right {
+                    row.right.clone()
+                } else {
+                    row.left.clone()
+                });
+                replacements.push(fragment);
+            }
+            for (line, row) in original_strings.iter().zip(&preview.rows) {
+                let mut fragment = line.clone();
+                fragment.tab = fragment.tab.map(|tab| tab.in_instance(instance));
+                fragment.edited = Some(if right {
+                    row.right.clone()
+                } else {
+                    row.left.clone()
+                });
+                replacements.push(fragment);
+            }
+        }
+        self.record_undo();
+        self.lines
+            .splice(preview.bounds.start..preview.bounds.end, replacements);
+        self.next_tab_instance = next_instance;
+        self.position = preview.bounds.start + annotation_count + 6;
+        self.horizontal_scroll = 0;
+        self.recompute_flags();
+        self.message =
+            Some("Tab block split; focused first right row. Undo restores the whole split.".into());
+        Ok(())
+    }
+
+    fn recompute_flags(&mut self) {
+        self.flags = self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.is_flag())
+            .map(|(index, _)| index)
+            .collect();
     }
 
     pub fn classifier_label(&self) -> String {
@@ -387,11 +738,19 @@ impl TriageState {
                 ),
             },
             Verdict::Keep => {
-                if line.preamble {
+                if line.preamble && !matches!(line.kind, LineKind::TabAnnotation(_)) {
                     "keep (preamble · metadata consumed, not in body)".into()
                 } else {
                     match &line.kind {
                         LineKind::Ambiguous(_) => "keep (resolved as lyric)".into(),
+                        LineKind::Fretboard(_) => {
+                            "keep (literal ASCII tabs; whitespace preserved, no fret transposition)"
+                                .into()
+                        }
+                        LineKind::TabAnnotation(_) => {
+                            "keep (literal tab annotation; attached, aligned and not transposed)"
+                                .into()
+                        }
                         LineKind::Blank | LineKind::Noise(_) => "keep (dropped)".into(),
                         _ => format!("keep ({})", line_kind_label(&line.kind)),
                     }
@@ -413,6 +772,12 @@ impl TriageState {
     }
 
     pub fn handle(&mut self, key: Key) {
+        if !matches!(
+            key,
+            Key::TransposeUp | Key::TransposeDown | Key::TransposeReset
+        ) {
+            self.review_revision = self.review_revision.wrapping_add(1);
+        }
         if key == Key::CtrlC {
             self.phase = Phase::Quit;
             return;
@@ -493,6 +858,8 @@ impl TriageState {
         }
 
         match key {
+            Key::PanLeft => self.horizontal_scroll = self.horizontal_scroll.saturating_sub(8),
+            Key::PanRight => self.horizontal_scroll = self.horizontal_scroll.saturating_add(8),
             Key::Next => self.move_to(self.position.saturating_add(1)),
             Key::Prev => self.move_to(self.position.saturating_sub(1)),
             Key::NextFlag => self.move_to_next_flag(1),
@@ -505,6 +872,7 @@ impl TriageState {
             Key::ChordOnly => self.decide(Verdict::ChordOnly),
             Key::SectionHeader => self.decide(Verdict::SectionHeader),
             Key::Noise => self.decide(Verdict::Noise),
+            Key::TabAnnotation => self.associate_tab_annotation(),
             Key::Edit => {
                 if let Some(line) = self.current_line() {
                     self.edit_buffer = line.text().to_string();
@@ -521,6 +889,8 @@ impl TriageState {
 
     fn handle_preview(&mut self, key: Key) {
         match key {
+            Key::PanLeft => self.horizontal_scroll = self.horizontal_scroll.saturating_sub(8),
+            Key::PanRight => self.horizontal_scroll = self.horizontal_scroll.saturating_add(8),
             Key::Next => self.scroll_preview(1),
             Key::Prev => self.scroll_preview(-1),
             Key::PageDown => self.scroll_preview(PREVIEW_PAGE as isize),
@@ -590,6 +960,78 @@ impl TriageState {
         }
     }
 
+    /// Explicit association is intentionally different from the conservative
+    /// parser: a reviewer may mark an arbitrary comment row, but only when it
+    /// is directly before (or in the existing annotation prefix of) a complete
+    /// retained original-six block. No discarded/blank/prose row is crossed.
+    fn associate_tab_annotation(&mut self) {
+        let position = self.position;
+        let Some(current) = self.current_line() else {
+            return;
+        };
+        if current
+            .tab
+            .is_some_and(|tab| tab.role() == TabRowRole::String)
+            || matches!(current.effective_kind(), Some(LineKind::Fretboard(_)))
+        {
+            self.message = Some(
+                "Select a comment row before a tab block, not one of its six string rows.".into(),
+            );
+            return;
+        }
+        let mut string_start = position + 1;
+        while self
+            .lines
+            .get(string_start)
+            .is_some_and(|line| matches!(line.effective_kind(), Some(LineKind::TabAnnotation(_))))
+        {
+            string_start += 1;
+        }
+        let target = self
+            .lines
+            .get(string_start)
+            .and_then(|line| line.tab)
+            .filter(|tab| tab.role() == TabRowRole::String && tab.original_rows() == 6);
+        let Some(target) = target else {
+            self.message = Some("Tab annotation must be immediately before a complete original six-string block; only already associated annotation rows may intervene.".into());
+            return;
+        };
+        let identity = (target.origin(), target.instance());
+        let valid_strings = (0..6).all(|row| {
+            self.lines.get(string_start + row).is_some_and(|line| {
+                line.tab.is_some_and(|tab| {
+                    (tab.origin(), tab.instance()) == identity
+                        && tab.role() == TabRowRole::String
+                        && tab.original_rows() == 6
+                        && tab.original_row() == row + 1
+                }) && matches!(line.effective_kind(), Some(LineKind::Fretboard(_)))
+            })
+        });
+        let valid_intervening = self.lines[position + 1..string_start].iter().all(|line| {
+            line.tab.is_some_and(|tab| {
+                (tab.origin(), tab.instance()) == identity && tab.role() == TabRowRole::Annotation
+            })
+        });
+        if !valid_strings || !valid_intervening {
+            self.message = Some("Cannot associate this row: the following block must contain its six retained string rows on stable original instance boundaries.".into());
+            return;
+        }
+
+        self.record_undo();
+        self.lines[position].kind =
+            LineKind::TabAnnotation(self.lines[position].text().to_string());
+        self.lines[position].verdict = Verdict::Keep;
+        for (row, line) in self.lines[position..string_start].iter_mut().enumerate() {
+            line.tab = Some(target.annotation(line.source_line, row + 1));
+        }
+        self.recompute_flags();
+        self.move_to(position.saturating_add(1));
+        self.message = Some(
+            "Line kept as tab annotation and associated with the following six-string block."
+                .into(),
+        );
+    }
+
     fn decide(&mut self, verdict: Verdict) {
         if self.current_line().is_none() {
             return;
@@ -616,6 +1058,7 @@ impl TriageState {
     }
 
     fn record_undo(&mut self) {
+        self.review_revision = self.review_revision.wrapping_add(1);
         let snapshot = self.snapshot();
         self.undo.push(snapshot);
     }
@@ -626,6 +1069,9 @@ impl TriageState {
             metadata_field: self.metadata_field,
             lines: self.lines.clone(),
             position: self.position,
+            phase: self.phase,
+            preview_scroll: self.preview_scroll,
+            horizontal_scroll: self.horizontal_scroll,
         }
     }
 
@@ -635,6 +1081,10 @@ impl TriageState {
             self.metadata_field = snapshot.metadata_field;
             self.lines = snapshot.lines;
             self.position = snapshot.position;
+            self.phase = snapshot.phase;
+            self.preview_scroll = snapshot.preview_scroll;
+            self.horizontal_scroll = snapshot.horizontal_scroll;
+            self.recompute_flags();
             self.editing = false;
             self.edit_buffer.clear();
             self.message = Some("Undone.".into());
@@ -649,6 +1099,18 @@ impl TriageState {
         let mut song = Song::default();
         self.metadata.apply_to(&mut song);
         song.sections = rebuild_sections(&self.lines);
+        let retained: Vec<_> = self
+            .lines
+            .iter()
+            .filter(|line| {
+                matches!(
+                    line.effective_kind(),
+                    Some(LineKind::Fretboard(_) | LineKind::TabAnnotation(_))
+                )
+            })
+            .map(|line| line.tab)
+            .collect();
+        tablature::attach(&mut song, &retained);
         if self.transpose != 0 {
             transpose_song(&mut song, self.transpose);
         }
@@ -701,6 +1163,10 @@ fn rebuild_sections(lines: &[ReviewLine]) -> Vec<Section> {
             Some(LineKind::Fretboard(text)) => {
                 flush_pending(&mut current, &mut pending_chords);
                 current.lines.push(LineKind::Fretboard(text));
+            }
+            Some(LineKind::TabAnnotation(text)) => {
+                flush_pending(&mut current, &mut pending_chords);
+                current.lines.push(LineKind::TabAnnotation(text));
             }
             Some(LineKind::Blank) | Some(LineKind::Noise(_)) => {
                 flush_pending(&mut current, &mut pending_chords);
@@ -768,7 +1234,7 @@ mod tests {
         let fixtures = [
             include_str!("../../../examples/let-it-be.txt"),
             include_str!("../../../examples/synthetic.txt"),
-            "Title here\nArtist here\n\nStandard (E A D G B E)\n[Intro]\nAm  F  C  G\n2x\n[Verse 1]\n[Am]Hello there\nmystery line\n[F]Bye\ne|---3---|\nWas this info helpful? Yes No\n[Chorus]\n[C]La la\n[Outro]\n",
+            "Title here\nArtist here\n\nStandard (E A D G B E)\n[Intro]\nAm  F  C  G\n2x\n[Verse 1]\n[Am]Hello there\nmystery line\n[F]Bye\ne|---3---|\nB|---1---|\nG|---0---|\nD|---2---|\nA|---3---|\nE|-------|\nWas this info helpful? Yes No\n[Chorus]\n[C]La la\n[Outro]\n",
             "Song: Spaced\nArtist: Band\n[Verse]\n  [Am]Hello there  \n    \n  Dm    G    \n  spaced lyric  \nWas this info helpful? Yes No\n[F]Goodbye\n",
         ];
         for raw in fixtures {

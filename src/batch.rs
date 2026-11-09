@@ -77,7 +77,9 @@ fn convert_file(file: &Path, out_path: &Path, standalone: bool, semitones: i32) 
     if song.sections.is_empty() {
         bail!("no song sections found (input may be only noise or metadata)");
     }
-    let summary = audit_summary_line(&song, &raw);
+    let mut audited_song = song.clone();
+    transpose_song(&mut audited_song, semitones);
+    let summary = audit_summary_line(&audited_song, &raw);
     let mut song = song;
     apply_noninteractive_defaults(&mut song);
     transpose_song(&mut song, semitones);
@@ -150,6 +152,22 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn tab_conversion_retains_rows_warns_conditionally_and_rejects_overflow() {
+        let dir = tempdir("tabconversion");
+        let path = dir.join("tab.txt");
+        let out = dir.join("tab.tex");
+        fs::write(&path, "e|--0--12--|\n".repeat(6)).unwrap();
+        let summary = convert_file(&path, &out, true, 0).unwrap();
+        assert!(summary.contains("6 fretboard retained literally"));
+        assert!(!summary.contains(songbook_core::tablature::UNCHANGED_WARNING));
+        let summary = convert_file(&path, &out, true, 2).unwrap();
+        assert!(summary.contains(songbook_core::tablature::UNCHANGED_WARNING));
+        fs::write(&path, format!("e|{}\n", "-".repeat(55)).repeat(6)).unwrap();
+        assert!(convert_file(&path, &out, true, 0).is_err());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

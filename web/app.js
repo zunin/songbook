@@ -1,6 +1,8 @@
 import init, { SongbookSession, composeBook } from "./songbook_wasm.js";
 
 const ACCEPTED_EXTENSIONS = [".txt", ".crd"];
+const UNCHANGED_TAB_WARNING =
+  "Chord transposition is active; ASCII tabs are unchanged and may no longer match.";
 
 const state = {
   session: null,
@@ -22,6 +24,11 @@ const state = {
   // and a new song's first render starts fresh instead of comparing against
   // the previous song's counts.
   announced: null,
+  // Warnings have their own polite channel; moving through unchanged rows
+  // must not repeat them or lengthen the F11 verdict announcement.
+  announcedWarnings: null,
+  splitPreview: null,
+  splitBounds: null,
 };
 
 const els = {};
@@ -40,6 +47,14 @@ function initEls() {
     "export-paste-input", "export-paste-add", "export-paste-error",
     "metadata-form", "metadata-continue", "metadata-error",
     "triage-status", "triage-live", "triage-list", "start-over",
+    "triage-warnings", "triage-tab-scroll", "triage-tab-explanation",
+    "split-tab-button", "split-tab-panel", "split-tab-column", "split-tab-error",
+    "split-tab-range", "split-tab-scope", "split-tab-preview-trigger",
+    "split-tab-preview", "split-tab-preview-live", "split-tab-left", "split-tab-right",
+    "split-tab-left-heading", "split-tab-right-heading",
+    "split-tab-left-empty", "split-tab-right-empty", "split-tab-row-details",
+    "split-tab-warnings", "split-tab-apply", "split-tab-cancel",
+    "preview-warnings", "preview-tab-help", "book-warnings", "warnings-live",
     "preview-content", "preview-back", "standalone-toggle", "download-tex",
     "download-pdf", "pdf-status", "convert-another",
     "transpose-down", "transpose-up", "transpose-reset", "transpose-label",
@@ -110,6 +125,110 @@ function wasSuffix(line) {
   return line.effectiveLabel === line.classifier
     ? ""
     : ` (was: ${line.classifier})`;
+}
+
+// Roles/labels, not string/fret parsing: core alone decides which source rows
+// are notation. Keep literal source legible even after Discard/reclassification.
+function isTabReviewLine(line) {
+  return line && (line.tabRole === "annotation" || line.tabRole === "string" ||
+    line.classifier === "fretboard" || line.classifier === "tab annotation" ||
+    line.effectiveLabel === "fretboard" || line.effectiveLabel === "tab annotation");
+}
+
+function tabReviewDetails(snapshot) {
+  const groups = new Map();
+  const details = new Map();
+  for (const line of snapshot.lines) {
+    if (line.tabRole !== "annotation" && line.tabRole !== "string") continue;
+    details.set(line.index, { role: line.tabRole });
+    if (line.tabOrigin == null || line.tabInstance == null) continue;
+    const key = JSON.stringify([line.tabOrigin, line.tabInstance]);
+    if (!groups.has(key)) groups.set(key, { annotation: [], string: [] });
+    groups.get(key)[line.tabRole].push(line);
+  }
+  for (const group of groups.values()) {
+    for (const role of ["annotation", "string"]) {
+      const rows = group[role];
+      // The full review snapshot includes discarded/reclassified rows. Count
+      // by provenance, never by retained text or apparent string labels. Only
+      // number strings when all six source identities are available; otherwise
+      // the API would need original_row/original_rows to promise an ordinal.
+      if (role === "string" && rows.length !== 6) continue;
+      const sources = new Set(rows.map((line) => line.sourceLine));
+      if (sources.size !== rows.length || rows.some((line) =>
+        !Number.isInteger(line.sourceLine) || line.sourceLine < 1)) continue;
+      rows.sort((a, b) => a.sourceLine - b.sourceLine);
+      rows.forEach((line, index) => details.set(line.index, {
+        role, ordinal: index + 1, count: role === "string" ? 6 : rows.length,
+      }));
+    }
+  }
+  return details;
+}
+
+function tabRoleText(detail) {
+  if (!detail) return "";
+  if (!detail.ordinal) return detail.role;
+  return detail.role === "string"
+    ? `string ${detail.ordinal}/${detail.count}` : `annotation ${detail.ordinal}`;
+}
+
+function reviewLabel(line, detail) {
+  // "tab annotation" is core's effective kind. The view presents it alongside
+  // fretboard strings, but explicit Lyric/Header/etc. overrides remain intact.
+  return line.effectiveLabel === "tab annotation" && detail?.role === "annotation"
+    ? "fretboard" : line.effectiveLabel;
+}
+
+function reviewLabelText(line, detail) {
+  const role = tabRoleText(detail);
+  return reviewLabel(line, detail) + (role ? ` · ${role}` : "");
+}
+
+function sourceIdentity(line) {
+  if (!isTabReviewLine(line)) return "";
+  const parts = [];
+  if (line.sourceLine != null) parts.push(`source line ${line.sourceLine}`);
+  if (line.tabInstance != null) parts.push(`tab group ${line.tabInstance}`);
+  if (line.tabOrigin != null) parts.push(`origin ${line.tabOrigin}`);
+  return parts.length ? `, ${parts.join(", ")}` : "";
+}
+
+function snapshotWarnings(snapshot) {
+  return Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+}
+
+function renderWarningList(id, warnings, heading = "Song warnings") {
+  const box = els[id];
+  box.textContent = "";
+  box.hidden = warnings.length === 0;
+  if (box.hidden) return;
+  const title = document.createElement("h3");
+  title.textContent = heading;
+  const list = document.createElement("ul");
+  for (const warning of warnings) {
+    const item = document.createElement("li");
+    item.textContent = warning;
+    list.append(item);
+  }
+  box.append(title, list);
+}
+
+function announceWarningChanges(warnings, owner, label = "Song") {
+  const previous = state.announcedWarnings;
+  const signature = JSON.stringify(warnings);
+  if (previous?.owner === owner && previous.signature === signature) return;
+  state.announcedWarnings = { owner, signature, count: warnings.length };
+  els["warnings-live"].textContent = warnings.length > 0
+    ? `${label} warnings: ${warnings.join(" ")}`
+    : previous?.owner === owner && previous.count > 0
+      ? `${label} warnings cleared.` : "";
+}
+
+function renderSongWarnings(snapshot, id) {
+  const warnings = snapshotWarnings(snapshot);
+  renderWarningList(id, warnings);
+  announceWarningChanges(warnings, state.session);
 }
 
 function renderMetadata(snapshot) {
@@ -254,7 +373,203 @@ function renderTriage(snapshot) {
     els["triage-back"].textContent = bookBackLabel();
   }
   els["triage-status"].textContent = statusText(snapshot);
+  const currentIsTab = isTabReviewLine(snapshot.lines[snapshot.position]);
+  els["triage-tab-explanation"].hidden = !currentIsTab;
+  const editButton = els["triage-screen"].querySelector('button[data-action="edit"]');
+  if (currentIsTab) editButton.setAttribute("aria-describedby", "triage-tab-edit");
+  else editButton.removeAttribute("aria-describedby");
+  renderSongWarnings(snapshot, "triage-warnings");
+  renderTabSplitAction(snapshot);
   renderTriageList(snapshot, wasEditing);
+}
+
+function openTabSplit() {
+  const bounds = state.snapshot?.tabSplitBounds;
+  if (!bounds) return;
+  state.splitBounds = bounds;
+  state.splitPreview = null;
+  els["split-tab-error"].textContent = "";
+  els["split-tab-warnings"].textContent = "";
+  els["split-tab-warnings"].hidden = true;
+  els["split-tab-preview"].hidden = true;
+  const input = els["split-tab-column"];
+  input.min = String(bounds.minAfterColumn);
+  input.max = String(bounds.maxAfterColumn);
+  input.value = String(bounds.maxAfterColumn);
+  els["split-tab-range"].textContent =
+    `${bounds.minAfterColumn} through ${bounds.maxAfterColumn} inclusive`;
+  const annotations = bounds.annotationCount ?? 0;
+  els["split-tab-scope"].textContent =
+    `${annotations} annotation ${annotations === 1 ? "row" : "rows"} above six string rows; ` +
+    `review lines ${bounds.start + 1} through ${bounds.end}, original block source line ${bounds.sourceLine}.`;
+  els["split-tab-preview-live"].textContent = "";
+  els["split-tab-apply"].hidden = true;
+  els["split-tab-preview-trigger"].hidden = false;
+  els["split-tab-panel"].hidden = false;
+  input.focus();
+  announce(`Choose a raw column from ${bounds.minAfterColumn} through ${bounds.maxAfterColumn}.`);
+}
+
+function invalidateTabSplitPreview(announceChange = true) {
+  if (!state.splitPreview) return;
+  // Cancel only the private plan. Typing a new column never plans or applies
+  // anything; even changing back to the old value requires explicit Preview.
+  try {
+    state.session.cancelTabSplit();
+  } catch (error) {
+    announce(`Could not clear split preview: ${error}`);
+  }
+  state.splitPreview = null;
+  els["split-tab-preview"].hidden = true;
+  els["split-tab-apply"].hidden = true;
+  els["split-tab-preview-trigger"].hidden = false;
+  els["split-tab-warnings"].textContent = "";
+  if (announceChange) {
+    els["split-tab-preview-live"].textContent =
+      "Column changed. Preview split again before applying.";
+  }
+}
+
+function previewTabSplit() {
+  invalidateTabSplitPreview(false);
+  const input = els["split-tab-column"];
+  const value = input.valueAsNumber;
+  const bounds = state.splitBounds;
+  if (!bounds || !Number.isInteger(value) || value < bounds.minAfterColumn ||
+      value > bounds.maxAfterColumn) {
+    els["split-tab-error"].textContent = bounds
+      ? `Enter a whole raw column from ${bounds.minAfterColumn} through ${bounds.maxAfterColumn}.`
+      : "The selected tab block is no longer eligible. Cancel and select a complete original six-string block.";
+    input.focus();
+    return;
+  }
+  try {
+    state.splitPreview = state.session.planTabSplit(value);
+    els["split-tab-error"].textContent = "";
+    renderTabSplitPreview(state.splitPreview);
+  } catch (error) {
+    state.splitPreview = null;
+    els["split-tab-preview"].hidden = true;
+    els["split-tab-apply"].hidden = true;
+    els["split-tab-error"].textContent =
+      `Could not create split preview: ${error}. Review the selected block and try again, or cancel.`;
+    announce(els["split-tab-error"].textContent);
+  }
+}
+
+function cancelTabSplit() {
+  try {
+    state.snapshot = state.session.cancelTabSplit();
+  } catch (error) {
+    announce(`Could not cancel split preview: ${error}`);
+  }
+  state.splitPreview = null;
+  state.splitBounds = null;
+  els["split-tab-panel"].hidden = true;
+  render();
+  els["split-tab-button"].focus({ preventScroll: true });
+  announce("Split preview cancelled; the song is unchanged.");
+}
+
+function applyTabSplit() {
+  if (!state.splitPreview) return;
+  if (els["split-tab-column"].valueAsNumber !== state.splitPreview.afterColumn) {
+    invalidateTabSplitPreview();
+    els["split-tab-error"].textContent =
+      "The column differs from the preview. Preview split again before applying.";
+    return;
+  }
+  try {
+    state.snapshot = state.session.applyTabSplit();
+    state.splitPreview = null;
+    state.splitBounds = null;
+    els["split-tab-panel"].hidden = true;
+    render();
+    announce("Tab block split applied as one undoable change.");
+  } catch (error) {
+    state.splitPreview = null;
+    els["split-tab-preview"].hidden = true;
+    els["split-tab-error"].textContent =
+      `The split plan is stale or could not be applied: ${error}. No split was applied. Cancel and select the block again to make a fresh preview.`;
+    els["split-tab-apply"].hidden = true;
+    els["split-tab-preview-trigger"].hidden = false;
+    announce(els["split-tab-error"].textContent);
+  }
+}
+
+function renderTabSplitAction(snapshot) {
+  const bounds = snapshot.tabSplitBounds ?? null;
+  const currentIndex = snapshot.position;
+  const eligible = !snapshot.editing && bounds &&
+    currentIndex >= bounds.start && currentIndex < bounds.end;
+  els["split-tab-button"].hidden = !eligible;
+  if (!eligible && !state.splitPreview) {
+    els["split-tab-panel"].hidden = true;
+    state.splitBounds = null;
+    return;
+  }
+  if (eligible) state.splitBounds = bounds;
+  if (state.splitPreview) renderTabSplitPreview(state.splitPreview);
+}
+
+function renderTabSplitSide(preview, side) {
+  const annotations = preview.annotations ?? [];
+  const box = els[`split-tab-${side}`];
+  const name = side === "left" ? "Left" : "Right";
+  const count = `${annotations.length} annotation ${annotations.length === 1 ? "row" : "rows"} above ${preview.rows.length} string rows`;
+  els[`split-tab-${side}-heading`].textContent = `${name} block — ${count}`;
+  box.setAttribute("aria-label", `${name} split preview, ${count}, scrollable`);
+  box.textContent = "";
+  const empty = [];
+  for (const [role, rows] of [["annotation", annotations], ["string", preview.rows]]) {
+    for (const row of rows) {
+      const literal = document.createElement("div");
+      literal.className = `split-literal-fragment split-${role}`;
+      literal.textContent = row[side];
+      box.append(literal);
+      if (role === "annotation" && (side === "right"
+        ? row.rightLabelOnly : row.leftColumns === 0)) {
+        empty.push(`Annotation ${row.originalRow}, source line ${row.sourceLine}: ` +
+          (side === "right"
+            ? `no text after the cut; the literal row contains only ${row.paddingColumns} alignment spaces.`
+            : "empty literal fragment."));
+      }
+    }
+  }
+  // Describe an empty suffix outside the literal rows. Never insert placeholder
+  // characters into core's text or between annotations and their six strings.
+  const placeholder = els[`split-tab-${side}-empty`];
+  placeholder.hidden = empty.length === 0;
+  placeholder.textContent = empty.join(" ");
+}
+
+function renderTabSplitPreview(preview) {
+  renderTabSplitSide(preview, "left");
+  renderTabSplitSide(preview, "right");
+  const details = els["split-tab-row-details"];
+  details.textContent = "";
+  for (const [role, rows] of [["annotation", preview.annotations ?? []], ["string", preview.rows]]) {
+    for (const row of rows) {
+      const item = document.createElement("li");
+      const label = role === "annotation"
+        ? `Annotation ${row.originalRow}` : `String ${row.originalRow}/6`;
+      item.textContent = `${label}, source line ${row.sourceLine}: ` +
+        `original ${row.originalColumns} columns; left ${row.leftColumns}; right ${row.rightColumns}. ` +
+        `${row.paddingColumns} added right alignment spaces; ` +
+        (role === "annotation" ? "no annotation text repeated." :
+          `${row.prefix.length} exact label/first-pipe prefix columns repeated.`);
+      details.append(item);
+    }
+  }
+  els["split-tab-warnings"].textContent = preview.warnings.join(" ");
+  els["split-tab-warnings"].hidden = preview.warnings.length === 0;
+  els["split-tab-preview"].hidden = false;
+  els["split-tab-apply"].hidden = false;
+  els["split-tab-preview-trigger"].hidden = false;
+  els["split-tab-preview-live"].textContent =
+    `Split preview after raw column ${preview.afterColumn}. Each child has ` +
+    `${(preview.annotations ?? []).length} annotation rows above ${preview.rows.length} string rows. ` +
+    `Left block, then right block. Row lengths and added alignment spaces are disclosed below. ${preview.warnings.join(" ")}`;
 }
 
 function renderTriageList(snapshot, wasEditing) {
@@ -266,16 +581,32 @@ function renderTriageList(snapshot, wasEditing) {
   // over (the previous screen's focus died with it), or when edit mode just
   // opened (the input must own focus to be typed into). Otherwise keep
   // focus where it is and let announceTriageChange carry the change.
+  const focusOnList = document.activeElement === list;
   const focusInList = list.contains(document.activeElement);
   const focusOnScreen = els["triage-screen"].contains(document.activeElement);
   const enteringEdit = snapshot.editing && !wasEditing;
+  const horizontal = list.scrollLeft;
+  const hasTabs = snapshot.lines.some(isTabReviewLine);
+  els["triage-tab-scroll"].hidden = !hasTabs;
+  if (hasTabs) {
+    list.tabIndex = 0;
+    list.setAttribute("aria-label", "Song lines, scrollable");
+    list.setAttribute("aria-describedby", "triage-tab-scroll");
+  } else {
+    list.removeAttribute("tabindex");
+    list.removeAttribute("aria-label");
+    list.removeAttribute("aria-describedby");
+  }
 
+  const tabDetails = tabReviewDetails(snapshot);
   list.textContent = "";
   for (const line of snapshot.lines) {
+    const detail = tabDetails.get(line.index);
     const item = document.createElement("div");
     item.setAttribute("role", "listitem");
     item.dataset.index = String(line.index);
     item.className = "triage-line";
+    if (isTabReviewLine(line)) item.classList.add("tab-line");
     if (line.index === snapshot.position) item.classList.add("current");
     if (line.status === "pending") item.classList.add("pending");
     if (line.flag) item.classList.add("flagged");
@@ -294,7 +625,13 @@ function renderTriageList(snapshot, wasEditing) {
 
     const kind = document.createElement("span");
     kind.className = "line-kind";
-    kind.textContent = line.effectiveLabel;
+    kind.textContent = reviewLabel(line, detail);
+    if (detail) {
+      const role = document.createElement("span");
+      role.className = "line-tab-role";
+      role.textContent = ` · ${tabRoleText(detail)}`;
+      kind.append(role);
+    }
     if (line.effectiveLabel !== line.classifier) {
       const was = document.createElement("span");
       was.className = "was";
@@ -306,13 +643,16 @@ function renderTriageList(snapshot, wasEditing) {
       `${line.flag ? ", flagged" : ""}${line.index === snapshot.position ? ", current" : ""}`;
 
     if (state.editing && line.index === snapshot.position) {
-      item.append(marker, number, kind, buildEditInput(line));
+      item.append(marker, number, kind, buildEditInput(line, detail));
     } else {
       const select = document.createElement("button");
       select.type = "button";
       select.className = "line-select";
+      if (isTabReviewLine(line)) {
+        select.setAttribute("aria-describedby", "triage-tab-scroll triage-tab-keep");
+      }
       select.setAttribute("aria-label",
-        `Line ${line.index + 1}, ${line.effectiveLabel}${wasSuffix(line)}, ${described}: ` +
+        `Line ${line.index + 1}, ${reviewLabelText(line, detail)}${wasSuffix(line)}${sourceIdentity(line)}, ${described}: ` +
         (line.edited ? line.text : line.original));
       const text = document.createElement("span");
       text.className = "line-text";
@@ -326,15 +666,29 @@ function renderTriageList(snapshot, wasEditing) {
   }
 
   const current = list.querySelector(".current");
-  const target = current &&
+  // A deliberately focused scroll container stays focused for native
+  // Left/Right scrolling; row and action-button focus still follow F2.
+  const keepListFocus = focusOnList && hasTabs && !enteringEdit;
+  const target = keepListFocus ? list : current &&
     (current.querySelector(".line-edit-input") ??
       current.querySelector(".line-select"));
   const pullFocus = Boolean(target) &&
     (focusInList || !focusOnScreen || enteringEdit);
   if (pullFocus && document.activeElement !== target) {
-    target.focus();
+    target.focus({ preventScroll: true });
   }
-  announceTriageChange(snapshot, pullFocus);
+  // Follow the current row even when focus stays on the scroller or actions.
+  // Scroll only the list vertically, never the page or a long tab row sideways.
+  if (current) {
+    const rect = current.getBoundingClientRect();
+    const top = list.getBoundingClientRect().top + list.clientTop;
+    const bottom = top + list.clientHeight;
+    if (rect.top < top) list.scrollTop += rect.top - top;
+    else if (rect.bottom > bottom) list.scrollTop += rect.bottom - bottom;
+  }
+  // Rebuilding the list can reset horizontal scroll; keep the user's position.
+  list.scrollLeft = horizontal;
+  announceTriageChange(snapshot, pullFocus && !keepListFocus, tabDetails);
 }
 
 // F11: one SHORT, change-focused message per action in #triage-live, built
@@ -348,25 +702,29 @@ function renderTriageList(snapshot, wasEditing) {
 //   skipped when neither the position nor the current line's status changed,
 //   so a no-op never re-announces,
 // - "N pending left" when a verdict (or undo) changed the pending count.
-function announceTriageChange(snapshot, pullFocus) {
+function announceTriageChange(snapshot, pullFocus, tabDetails) {
   const line = snapshot.lines[snapshot.position];
+  const label = line
+    ? reviewLabelText(line, tabDetails.get(line.index)) + sourceIdentity(line) : "";
   const pending = countPending(snapshot);
   const fresh = state.announced !== null &&
     state.announced.session === state.session;
   const lineChanged = !fresh ||
     state.announced.position !== snapshot.position ||
-    state.announced.status !== (line ? line.status : null);
+    state.announced.status !== (line ? line.status : null) ||
+    state.announced.label !== label;
   const countChanged = fresh && state.announced.pending !== pending;
   state.announced = {
     session: state.session,
     position: snapshot.position,
     status: line ? line.status : null,
+    label,
     pending,
   };
   const parts = [];
   if (snapshot.message) parts.push(snapshot.message);
   if (!pullFocus && lineChanged && line) {
-    let lineText = `Line ${snapshot.position + 1}, ${line.effectiveLabel}, ` +
+    let lineText = `Line ${snapshot.position + 1}, ${label}, ` +
       `${line.status}`;
     if (countChanged) lineText += `, ${pending} pending left`;
     parts.push(lineText);
@@ -376,13 +734,17 @@ function announceTriageChange(snapshot, pullFocus) {
   if (parts.length > 0) announce(parts.join(" "));
 }
 
-function buildEditInput(line) {
+function buildEditInput(line, detail) {
   const input = document.createElement("input");
   input.type = "text";
   input.className = "line-edit-input";
   input.value = state.snapshot.editBuffer ?? state.snapshot.lines[line.index].text;
   input.setAttribute("aria-label",
-    `Editing line ${line.index + 1}: ${input.value}`);
+    `Editing line ${line.index + 1}, ${reviewLabelText(line, detail)}${sourceIdentity(line)}`);
+  if (isTabReviewLine(line)) {
+    input.setAttribute("aria-describedby", "triage-tab-scroll triage-tab-edit");
+    input.spellcheck = false;
+  }
   input.dataset.previous = input.value;
 
   input.addEventListener("input", () => {
@@ -439,7 +801,7 @@ function moveToLine(targetIndex) {
   state.snapshot = session.snapshot();
   render();
   const row = els["triage-list"].querySelector(".current .line-select");
-  if (row) row.focus();
+  if (row) row.focus({ preventScroll: true });
 }
 
 function renderPreviewPhase(snapshot) {
@@ -448,6 +810,10 @@ function renderPreviewPhase(snapshot) {
   // button instead of yanking it into the scroll container.
   const previewHadFocus = container.contains(document.activeElement) ||
     TRANSPOSE_IDS.some((id) => els[id] === document.activeElement);
+  const oldBlocks = Array.from(container.querySelectorAll(".tab-block"));
+  const focusedBlock = oldBlocks.find((block) => block === document.activeElement);
+  const horizontal = new Map(oldBlocks.map((block) =>
+    [block.dataset.previewStart, block.scrollLeft]));
   showScreen("preview-screen");
   const book = Boolean(state.book);
   els["standalone-toggle"].closest("label").hidden = book;
@@ -464,14 +830,31 @@ function renderPreviewPhase(snapshot) {
     els["book-next"].textContent = bookForwardLabel();
   }
   renderTransposeLabel(snapshot);
+  renderSongWarnings(snapshot, "preview-warnings");
+  const rows = sessionPreviewRows();
+  const warningNotes = new Set(snapshotWarnings(snapshot));
+  warningNotes.add(UNCHANGED_TAB_WARNING);
+  const logicalRows = [];
+  const blocks = [];
+  let tabBlock = null;
   container.textContent = "";
-  for (const row of sessionPreviewRows()) {
+  rows.forEach((row, index) => {
+    // Core's blank/group-note/style rows delimit runs. Annotations share the
+    // following literal strings' scroll region; a later note stays outside it.
+    const literalTab = row.style === "tablature" || row.style === "tab-annotation";
+    if (!literalTab) tabBlock = null;
+    // Warnings have one visible list and one live channel, not duplicate notes
+    // inside the preview. Keep the original core row indices for scrolling.
+    if (row.style === "note" && warningNotes.has(row.text)) {
+      logicalRows.push(null);
+      return;
+    }
     const div = document.createElement("div");
     div.className = `row-${row.style}`;
-    div.textContent = row.text === "" ? " " : row.text;
-    // F12: the "Metadata"/"Sections" banner rows and the song's section rows
-    // read as a heading outline for assistive tech; the metadata field rows
-    // stay plain text.
+    div.dataset.previewIndex = String(index);
+    div.textContent = row.text;
+    logicalRows.push(div);
+    // F12: preserve the preview's heading outline.
     if (row.style === "header") {
       div.setAttribute("role", "heading");
       div.setAttribute("aria-level", "2");
@@ -479,12 +862,43 @@ function renderPreviewPhase(snapshot) {
       div.setAttribute("role", "heading");
       div.setAttribute("aria-level", "3");
     }
-    container.append(div);
+    if (literalTab) {
+      if (!tabBlock) {
+        tabBlock = document.createElement("div");
+        tabBlock.className = "tab-block";
+        tabBlock.dataset.previewStart = String(index);
+        tabBlock.tabIndex = 0;
+        tabBlock.setAttribute("role", "region");
+        tabBlock.setAttribute("aria-label", `ASCII tab block ${blocks.length + 1}, scrollable`);
+        tabBlock.setAttribute("aria-describedby", "preview-tab-help");
+        blocks.push(tabBlock);
+        container.append(tabBlock);
+      }
+      tabBlock.append(div);
+    } else {
+      container.append(div);
+    }
+  });
+  els["preview-tab-help"].hidden = blocks.length === 0;
+  for (const [index, block] of blocks.entries()) {
+    const annotations = block.querySelectorAll(".row-tab-annotation").length;
+    const strings = block.querySelectorAll(".row-tablature").length;
+    block.setAttribute("aria-label",
+      `ASCII tab block ${index + 1}, ${annotations} annotation rows and ${strings} string rows, scrollable`);
+    block.scrollLeft = horizontal.get(block.dataset.previewStart) ?? 0;
   }
-  container.scrollTop = Array.from(container.children)
-    .slice(0, snapshot.previewScroll)
-    .reduce((top, row) => top + row.offsetHeight, 0);
-  if (!previewHadFocus) container.focus();
+  // Nested tab rows and omitted warning notes still use core's logical row
+  // index, not the number of top-level DOM children. Row geometry includes
+  // block borders/padding, and skips an omitted note to the next visible row.
+  const first = logicalRows.find(Boolean);
+  const target = logicalRows.slice(snapshot.previewScroll).find(Boolean);
+  container.scrollTop = first && target
+    ? target.getBoundingClientRect().top - first.getBoundingClientRect().top
+    : container.scrollHeight;
+  const restoredBlock = focusedBlock && blocks.find((block) =>
+    block.dataset.previewStart === focusedBlock.dataset.previewStart);
+  if (restoredBlock) restoredBlock.focus({ preventScroll: true });
+  else if (!previewHadFocus || focusedBlock) container.focus({ preventScroll: true });
   announce("Preview updated.");
 }
 
@@ -899,6 +1313,16 @@ function bookForwardLabel() {
   return "Continue to book export";
 }
 
+function renderBookWarnings(book) {
+  // Always ask each session for its current decisions/transposition, including
+  // revisited songs. Only announcement signatures are cached, not snapshots.
+  const warnings = book.results.filter((entry) => entry.session && !entry.error)
+    .flatMap((entry) => snapshotWarnings(entry.session.snapshot())
+      .map((warning) => `${entry.name}: ${warning}`));
+  renderWarningList("book-warnings", warnings, "Book warnings");
+  announceWarningChanges(warnings, book, "Book");
+}
+
 function showBookExport() {
   const book = state.book;
   if (!book) return;
@@ -918,6 +1342,7 @@ function showBookExport() {
     failedBox.append(line);
   }
   failedBox.hidden = failed.length === 0;
+  renderBookWarnings(book);
   els["chord-index-toggle"].checked = book.chordIndex;
   const exportable = done > 0;
   els["book-export-tex"].disabled = !exportable;
@@ -1077,6 +1502,7 @@ function bookStem() {
 
 function buildBookTex() {
   const book = state.book;
+  renderBookWarnings(book);
   const parts = [];
   for (const entry of book.results) {
     if (entry.session) parts.push(entry.session.bookParts());
@@ -1148,6 +1574,11 @@ function startOver() {
   state.editing = false;
   state.book = null;
   state.announced = null;
+  state.announcedWarnings = null;
+  els["warnings-live"].textContent = "";
+  for (const id of ["triage-warnings", "preview-warnings", "book-warnings"]) {
+    renderWarningList(id, []);
+  }
   els["metadata-form"].textContent = "";
   els["file-input"].value = "";
   els["file-error"].textContent = "";
@@ -1212,10 +1643,24 @@ function usePastedText() {
 
 function setupGlobalKeys() {
   document.addEventListener("keydown", (event) => {
+    // Escape cancels a staged split even while the numeric input owns focus;
+    // the generic input guard below intentionally ignores ordinary shortcuts.
+    if (!els["split-tab-panel"].hidden && event.key === "Escape") {
+      event.preventDefault();
+      cancelTabSplit();
+      return;
+    }
     const target = event.target;
     if (target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement) {
+      return;
+    }
+    if (state.splitPreview || !els["split-tab-panel"].hidden) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelTabSplit();
+      }
       return;
     }
     if (state.screen !== "triage-screen" &&
@@ -1259,6 +1704,10 @@ function setupGlobalKeys() {
     else if (key === "c") applyAction("chord_only");
     else if (key === "h") applyAction("section_header");
     else if (key === "n") applyAction("noise");
+    else if (key === "t") {
+      if (state.snapshot?.phase === "triage") applyAction("tab_annotation");
+      else handled = false;
+    }
     else if (key === "e") applyAction("edit");
     else if (key === "u") applyAction("undo");
     else if (key === "a") applyAutoAccept();
@@ -1344,6 +1793,23 @@ function setupControls() {
     });
   }
 
+  els["split-tab-button"].addEventListener("click", openTabSplit);
+  els["split-tab-preview-live"].addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelTabSplit();
+    }
+  });
+  els["split-tab-preview-trigger"].addEventListener("click", previewTabSplit);
+  els["split-tab-column"].addEventListener("input", () => invalidateTabSplitPreview());
+  els["split-tab-column"].addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      previewTabSplit();
+    }
+  });
+  els["split-tab-apply"].addEventListener("click", applyTabSplit);
+  els["split-tab-cancel"].addEventListener("click", cancelTabSplit);
   els["preview-back"].addEventListener("click", () => applyAction("back"));
   els["book-next"].addEventListener("click", bookForward);
   els["download-tex"].addEventListener("click", downloadTex);

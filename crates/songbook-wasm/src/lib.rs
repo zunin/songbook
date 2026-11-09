@@ -11,7 +11,7 @@ pub use book::compose_book;
 pub use error::SessionError;
 pub use model::{
     BookPartSnapshot, LineSnapshot, MetadataFieldSnapshot, MetadataSnapshot, PreviewRowSnapshot,
-    SessionSnapshot,
+    SessionSnapshot, TabSplitBoundsSnapshot, TabSplitPreviewSnapshot, TabSplitRowSnapshot,
 };
 pub use session::Session;
 

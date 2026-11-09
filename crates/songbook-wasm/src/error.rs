@@ -10,6 +10,8 @@ pub enum SessionError {
     UnknownKey(String),
     NotEditing,
     InvalidChar(String),
+    NoTabSplitPlan,
+    TabSplit(String),
     Render(String),
     Compose(String),
 }
@@ -31,6 +33,11 @@ impl fmt::Display for SessionError {
             Self::InvalidChar(value) => {
                 write!(formatter, "expected exactly one character, got: {value:?}")
             }
+            Self::NoTabSplitPlan => write!(
+                formatter,
+                "no tab split plan; preview the current block before applying"
+            ),
+            Self::TabSplit(message) => write!(formatter, "tab splitting failed: {message}"),
             Self::Render(message) => write!(formatter, "rendering failed: {message}"),
             Self::Compose(message) => write!(formatter, "book composition failed: {message}"),
         }

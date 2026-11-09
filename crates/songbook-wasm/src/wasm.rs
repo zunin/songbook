@@ -34,6 +34,42 @@ impl SongbookSession {
         to_js(&self.inner.snapshot())
     }
 
+    /// Stage a split using a whole raw-column count and return display data only.
+    /// The executable core plan stays private and is replaced by each request.
+    #[wasm_bindgen(js_name = planTabSplit)]
+    pub fn plan_tab_split(&mut self, after_column: f64) -> Result<JsValue, JsValue> {
+        // Do not let wasm's integer coercion turn fractions, NaN, negatives or
+        // wrapping values into a different, accidentally valid cut. Core owns
+        // the selected block's actual inclusive bounds.
+        if !after_column.is_finite()
+            || after_column.fract() != 0.0
+            || !(0.0..=f64::from(u32::MAX)).contains(&after_column)
+        {
+            self.inner.cancel_tab_split();
+            return Err(js_error(SessionError::TabSplit(
+                "split column must be a finite non-negative whole number".into(),
+            )));
+        }
+        let preview = self
+            .inner
+            .plan_tab_split(after_column as usize)
+            .map_err(js_error)?;
+        to_js(&preview)
+    }
+
+    /// Apply the privately stored one-use plan, returning the updated snapshot.
+    #[wasm_bindgen(js_name = applyTabSplit)]
+    pub fn apply_tab_split(&mut self) -> Result<JsValue, JsValue> {
+        let snapshot = self.inner.apply_tab_split().map_err(js_error)?;
+        to_js(&snapshot)
+    }
+
+    /// Cancel without changing review/undo, returning the unchanged snapshot.
+    #[wasm_bindgen(js_name = cancelTabSplit)]
+    pub fn cancel_tab_split(&mut self) -> Result<JsValue, JsValue> {
+        to_js(&self.inner.cancel_tab_split())
+    }
+
     #[wasm_bindgen(js_name = previewRows)]
     pub fn preview_rows(&self) -> Result<JsValue, JsValue> {
         to_js(&self.inner.preview_rows())

@@ -71,10 +71,14 @@ fn convert_song(path: &Path, semitones: i32) -> Result<(Song, String)> {
     if song.sections.is_empty() {
         bail!("no song sections found (input may be only noise or metadata)");
     }
-    let summary = audit_summary_line(&song, &raw);
+    let mut audited_song = song.clone();
+    transpose_song(&mut audited_song, semitones);
+    let summary = audit_summary_line(&audited_song, &raw);
     let mut song = song;
     apply_noninteractive_defaults(&mut song);
     transpose_song(&mut song, semitones);
+    songbook_core::tablature::validate(&song)
+        .with_context(|| format!("validating notation in {}", path.display()))?;
     Ok((song, summary))
 }
 
@@ -108,6 +112,21 @@ mod tests {
         let path = dir.join("album.book");
         fs::write(&path, body).unwrap();
         path
+    }
+
+    #[test]
+    fn book_tabs_warn_at_active_offset_and_unsupported_songs_are_skipped() {
+        let dir = tempdir("booktabs");
+        fs::write(dir.join("good.txt"), "e|--0--12--|\n".repeat(6)).unwrap();
+        fs::write(dir.join("bad.txt"), "e|--0--|\n".repeat(4)).unwrap();
+        let (_, summary) = convert_song(&dir.join("good.txt"), 2).unwrap();
+        assert!(summary.contains(songbook_core::tablature::UNCHANGED_WARNING));
+        let manifest = write_manifest(&dir, "good.txt\nbad.txt\n");
+        let summary = run(&manifest, None, false, 0).unwrap();
+        assert_eq!((summary.included, summary.skipped), (1, 1));
+        let tex = fs::read_to_string(dir.join("album.tex")).unwrap();
+        assert!(tex.contains("\\songcolumns{1}"));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

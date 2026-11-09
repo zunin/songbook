@@ -1,6 +1,6 @@
 use crate::latex::render::chorus_signature;
 use crate::parser::classify::metadata_provenance;
-use crate::parser::song::{LineKind, Section, Song};
+use crate::parser::song::{LineKind, Song};
 
 /// Builds the audit text describing what the heuristics decided without the
 /// user. A pure function over the parsed song and raw input; used by `--yes`,
@@ -50,14 +50,24 @@ pub fn audit_report(song: &Song, raw: &str) -> String {
         ));
     }
     if !fretboard.is_empty() {
+        let outcome = if crate::tablature::validate(song).is_ok() {
+            "retained literally"
+        } else {
+            "retained for review (export blocked)"
+        };
         lines.push(format!(
-            "- {} fretboard {} dropped (first: \"{}\")",
+            "- {} fretboard {} {outcome} (first: \"{}\")",
             fretboard.len(),
             plural(fretboard.len(), "line", "lines"),
             fretboard[0]
         ));
     }
-    let collapsed = count_collapsed_choruses(&song.sections);
+    lines.extend(
+        crate::tablature::warnings(song)
+            .into_iter()
+            .map(|w| format!("- {w}")),
+    );
+    let collapsed = count_collapsed_choruses(song);
     if collapsed > 0 {
         lines.push(format!(
             "- {} repeated {} collapsed",
@@ -121,9 +131,15 @@ pub fn audit_summary_line(song: &Song, raw: &str) -> String {
         parts.push(format!("{ambiguous} ambiguous kept as lyric"));
     }
     if fretboard > 0 {
-        parts.push(format!("{fretboard} fretboard dropped"));
+        let outcome = if crate::tablature::validate(song).is_ok() {
+            "retained literally"
+        } else {
+            "retained for review (export blocked)"
+        };
+        parts.push(format!("{fretboard} fretboard {outcome}"));
     }
-    let collapsed = count_collapsed_choruses(&song.sections);
+    parts.extend(crate::tablature::warnings(song));
+    let collapsed = count_collapsed_choruses(song);
     if collapsed > 0 {
         parts.push(format!("{collapsed} chorus repeats collapsed"));
     }
@@ -145,11 +161,11 @@ fn plural<'a>(count: usize, singular: &'a str, plural_form: &'a str) -> &'a str 
 
 /// Counts consecutive chorus sections the renderer will collapse into the
 /// first chorus, mirroring the render-time equivalence check.
-fn count_collapsed_choruses(sections: &[Section]) -> usize {
+fn count_collapsed_choruses(song: &Song) -> usize {
     let mut previous: Option<String> = None;
     let mut collapsed = 0;
-    for section in sections {
-        match chorus_signature(section) {
+    for section_index in 0..song.sections.len() {
+        match chorus_signature(song, section_index) {
             Some(signature) if previous.as_deref() == Some(signature.as_str()) => collapsed += 1,
             Some(signature) => previous = Some(signature),
             None => previous = None,
@@ -161,7 +177,7 @@ fn count_collapsed_choruses(sections: &[Section]) -> usize {
 /// Applies the decisions the TUI would have defaulted to when no interactive
 /// review runs: ambiguous lines are kept as lyrics (the triage default, so
 /// `--yes` and batch output match the TUI's auto-accept), while fretboard
-/// lines stay unrendered and are reported as dropped.
+/// lines are retained literally with shared notation warnings.
 pub fn apply_noninteractive_defaults(song: &mut Song) {
     for section in &mut song.sections {
         for line in &mut section.lines {
@@ -226,11 +242,14 @@ mod tests {
     }
 
     #[test]
-    fn reports_dropped_fretboard_and_collapsed_choruses() {
+    fn reports_blocked_fretboard_and_differing_choruses() {
         let raw = "Song: T\n[Chorus]\n[F]Same line\n\n[Chorus]\n[F]Same line\n\ne|---3---|\n";
         let report = audit_report(&parse(raw), raw);
-        assert!(report.contains("1 fretboard line dropped"), "{report}");
-        assert!(report.contains("1 repeated chorus collapsed"), "{report}");
+        assert!(
+            report.contains("1 fretboard line retained for review (export blocked)"),
+            "{report}"
+        );
+        assert!(!report.contains("1 repeated chorus collapsed"), "{report}");
     }
 
     #[test]
@@ -260,11 +279,10 @@ mod tests {
     fn summary_line_lists_guesses_compactly() {
         let raw = "\nLet It Be\nThe Beatles\n[Verse]\n[Am]Hello\nmystery\ne|---3---|";
         let summary = audit_summary_line(&parse(raw), raw);
-        assert_eq!(
-            summary,
+        assert!(summary.starts_with(
             "title guessed: \"Let It Be\"; artist guessed: \"The Beatles\"; \
-             1 ambiguous kept as lyric; 1 fretboard dropped"
-        );
+             1 ambiguous kept as lyric; 1 fretboard retained for review (export blocked)"
+        ));
     }
 
     #[test]

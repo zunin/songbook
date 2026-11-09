@@ -9,6 +9,7 @@ pub enum RowStyle {
     Section,
     Lyric,
     Chord,
+    Tablature,
     Note,
     Blank,
 }
@@ -85,10 +86,9 @@ pub fn build(song: &Song, metadata: &Metadata) -> Vec<PreviewRow> {
     let mut previous_chorus: Option<String> = None;
     let mut repeat_noted = false;
     let mut any_section = false;
-    let mut fretboard_omitted = false;
 
-    for section in &song.sections {
-        let signature = chorus_signature(section);
+    for (section_index, section) in song.sections.iter().enumerate() {
+        let signature = chorus_signature(song, section_index);
         if let Some(signature) = &signature {
             if previous_chorus.as_deref() == Some(signature) {
                 if !repeat_noted {
@@ -106,18 +106,18 @@ pub fn build(song: &Song, metadata: &Metadata) -> Vec<PreviewRow> {
             repeat_noted = false;
         }
 
-        if section
-            .lines
-            .iter()
-            .any(|line| matches!(line, LineKind::Fretboard(_)))
-        {
-            fretboard_omitted = true;
-        }
-
         let renderable: Vec<&LineKind> = section
             .lines
             .iter()
-            .filter(|line| matches!(line, LineKind::Lyric(_) | LineKind::ChordOnly(_)))
+            .filter(|line| {
+                matches!(
+                    line,
+                    LineKind::Lyric(_)
+                        | LineKind::ChordOnly(_)
+                        | LineKind::Fretboard(_)
+                        | LineKind::TabAnnotation(_)
+                )
+            })
             .collect();
         if renderable.is_empty() {
             continue;
@@ -128,10 +128,34 @@ pub fn build(song: &Song, metadata: &Metadata) -> Vec<PreviewRow> {
             "[{}]",
             section_label(&section.kind)
         )));
-        for line in renderable {
+        for (line_index, line) in section.lines.iter().enumerate() {
+            if let Some((index, group)) = song
+                .tab_groups
+                .iter()
+                .enumerate()
+                .find(|(_, g)| g.section == section_index && g.annotation_start == line_index)
+            {
+                let label = if group.start == group.end {
+                    "Retained tab annotation group without strings"
+                } else if group.original_rows == 6 {
+                    "Literal six-string tab block"
+                } else {
+                    "Unsupported tab run"
+                };
+                rows.push(PreviewRow::note(format!(
+                    "{label} {} · source line {} · {} retained rows ({} originally)",
+                    index + 1,
+                    group.source_line,
+                    group.end - group.start,
+                    group.original_rows
+                )));
+            }
             match line {
                 LineKind::Lyric(text) => rows.push(PreviewRow::lyric(format!("  {text}"))),
                 LineKind::ChordOnly(text) => rows.push(PreviewRow::chord(format!("  {text}"))),
+                LineKind::Fretboard(text) | LineKind::TabAnnotation(text) => {
+                    rows.push(PreviewRow::new(RowStyle::Tablature, text))
+                }
                 _ => {}
             }
         }
@@ -141,10 +165,8 @@ pub fn build(song: &Song, metadata: &Metadata) -> Vec<PreviewRow> {
     if !any_section {
         rows.push(PreviewRow::note("(no renderable sections)"));
     }
-    if fretboard_omitted {
-        rows.push(PreviewRow::note(
-            "Fretboard lines are omitted by the current renderer.",
-        ));
+    for warning in crate::tablature::warnings(song) {
+        rows.push(PreviewRow::note(warning));
     }
 
     rows

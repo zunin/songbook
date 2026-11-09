@@ -383,8 +383,9 @@ fn spell_root(pc: i32, delta: i32, key: Option<&KeySpellings>) -> String {
 
 /// Transposes every chord token in `song` by `semitones` (negative = down) in
 /// place and returns how many chord tokens were transposed. Multiples of
-/// twelve are an exact no-op (`0` returned, song untouched), so a zero offset
-/// keeps existing byte-exact output.
+/// twelve leave chord/key text untouched (`0` returned), so a zero offset keeps
+/// existing byte-exact output. The net requested offset is recorded separately
+/// for unchanged-tab warnings, including nonzero full-octave requests.
 ///
 /// A parseable `Key:` metadata value spells every root through that key and is
 /// itself rewritten (`Key: C` +2 → `Key: D`); without one, the fixed ladders
@@ -396,6 +397,9 @@ fn spell_root(pc: i32, delta: i32, key: Option<&KeySpellings>) -> String {
 /// the non-interactive defaults they are lyric lines and transpose like any
 /// other.
 pub fn transpose_song(song: &mut Song, semitones: i32) -> usize {
+    if crate::tablature::has_tablature(song) {
+        song.tablature_transpose = song.tablature_transpose.saturating_add(semitones);
+    }
     if semitones.rem_euclid(12) == 0 {
         return 0;
     }

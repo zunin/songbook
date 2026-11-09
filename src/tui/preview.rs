@@ -19,6 +19,7 @@ fn row_style(style: RowStyle) -> Style {
             .fg(Color::Blue)
             .add_modifier(Modifier::BOLD),
         RowStyle::Lyric => Style::default(),
+        RowStyle::Tablature => Style::default(),
         RowStyle::Chord => Style::default().fg(Color::Green),
         RowStyle::Note => Style::default().fg(Color::Yellow),
         RowStyle::Blank => Style::default(),
@@ -33,25 +34,33 @@ pub fn draw(frame: &mut Frame, state: &TriageState, out_path: &Path) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4),
+            Constraint::Length(6),
             Constraint::Min(5),
             Constraint::Length(3),
         ])
         .split(frame.area());
 
-    draw_header(frame, chunks[0], out_path);
+    draw_header(frame, chunks[0], out_path, state);
     draw_body(frame, chunks[1], state);
     draw_footer(frame, chunks[2]);
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, out_path: &Path) {
-    let lines = vec![
+fn draw_header(frame: &mut Frame, area: Rect, out_path: &Path, state: &TriageState) {
+    // Put active warnings first so they remain visible even in a narrow view;
+    // the body also carries the complete, vertically scrollable warning text.
+    let mut lines: Vec<Line> = state.message.iter().cloned().map(Line::from).collect();
+    lines.extend(
+        songbook_core::tablature::warnings(&state.finish())
+            .into_iter()
+            .map(Line::from),
+    );
+    lines.extend([
         Line::from("Structure preview — what the renderer will emit (not a PDF simulation)."),
         Line::from(Span::styled(
             format!("Output: {}", out_path.display()),
             Style::default().fg(Color::Magenta),
         )),
-    ];
+    ]);
     let paragraph = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title("Preview"))
         .wrap(Wrap { trim: true });
@@ -70,14 +79,13 @@ fn draw_body(frame: &mut Frame, area: Rect, state: &TriageState) {
     };
     let paragraph = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .scroll((scroll as u16, 0))
-        .wrap(Wrap { trim: false });
+        .scroll((scroll as u16, state.horizontal_scroll));
     frame.render_widget(paragraph, area);
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect) {
     let legend = concat!(
-        "j/k or Up/Down scroll · PgUp/PgDn page · ",
+        "j/k or Up/Down scroll · Left/Right pan (no wrap) · PgUp/PgDn page · ",
         "+/- transpose · 0 reset · ",
         "Enter export · Esc/b back to triage · q quit"
     );
@@ -114,6 +122,44 @@ mod tests {
         state.handle(Key::Confirm);
         state.handle(Key::Skip);
         state
+    }
+
+    #[test]
+    fn narrow_tab_preview_never_wraps_and_pan_reveals_the_right_edge() {
+        let raw = format!(
+            "Song: Pan\n[Tab]\n{}",
+            "e|--------------------------12-END|\n".repeat(6)
+        );
+        let mut state = preview_state(&raw);
+        state.preview_scroll = 10;
+        let backend = TestBackend::new(20, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| draw_body(frame, frame.area(), &state))
+            .unwrap();
+        let before: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!before.contains("END"));
+        assert_eq!(before.matches("e|").count(), 6);
+        state.handle(Key::PanRight);
+        state.handle(Key::PanRight);
+        state.handle(Key::PanRight);
+        terminal
+            .draw(|frame| draw_body(frame, frame.area(), &state))
+            .unwrap();
+        let after: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert_eq!(after.matches("12-END|").count(), 6);
     }
 
     #[test]

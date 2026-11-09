@@ -231,6 +231,12 @@ pub fn compose_book(
         doc.push_str("\\maketitle\n\\newpage\n");
     }
     doc.push_str("\\showindex{Index of Songs}{titleidx}\n");
+    if parts
+        .iter()
+        .any(|part| part.body.contains(crate::tablature::LAYOUT_MARKER))
+    {
+        doc.push_str("\\songcolumns{1}\n");
+    }
     doc.push_str("\\begin{songs}{titleidx}\n");
     for part in parts {
         if chord_index {
@@ -302,6 +308,7 @@ mod tests {
     use super::*;
     use crate::audit::apply_noninteractive_defaults;
     use crate::parser::classify::parse;
+    use crate::triage::{TriageState, Verdict};
     use std::fs;
 
     const GOOD: &str = "Song: Good Song\nArtist: Someone\n\n[Verse]\n[Am]Hello there\n";
@@ -509,8 +516,9 @@ a-song.crd
         assert!(tex.contains("\\begin{document}\n\\showindex"));
     }
 
-    /// Golden book test (ADR0008): the composed document for the two example
-    /// songs must match the checked-in golden byte for byte.
+    /// Golden book test (ADR0008): explicitly discard tabs to preserve the
+    /// historical non-tab document byte for byte. Synthetic tablature tests
+    /// separately cover the new literal-retention default.
     #[test]
     fn golden_book_matches_fixture() {
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
@@ -525,7 +533,13 @@ a-song.crd
                 entry.path.display()
             );
             apply_noninteractive_defaults(&mut song);
-            songs.push(song);
+            let mut review = TriageState::new(song, &raw);
+            for line in &mut review.lines {
+                if matches!(line.kind, LineKind::Fretboard(_)) {
+                    line.verdict = Verdict::Discard;
+                }
+            }
+            songs.push(review.finish());
         }
         let tex = render_book(&manifest, &songs, false).unwrap();
         let golden = fs::read_to_string(examples.join("demo-book.tex")).unwrap();

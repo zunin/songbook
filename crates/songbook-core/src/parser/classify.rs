@@ -144,9 +144,143 @@ fn fingering_re() -> &'static Regex {
     FINGERING_RE.get_or_init(|| Regex::new(r"^[xX0-9\-/\\hpbr~()\s]+$").unwrap())
 }
 
+/// Candidate labelled notation row. The payload is opaque; only the label
+/// and its first notation character are recognized, never notes or frets.
+/// Digit/delimiter-leading forms are promoted contextually by `literal_rows`.
+fn literal_candidate(line: &str) -> bool {
+    let Some((label, body)) = line.trim().split_once('|') else {
+        return false;
+    };
+    !label.is_empty()
+        && label.len() <= 8
+        && label
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'#')
+        && (body.starts_with(['-', '|'])
+            || (body.as_bytes().first().is_some_and(u8::is_ascii_digit)
+                && body.contains(['-', '|'])))
+}
+
+/// Recognize consecutive labelled candidates, including unsupported 4/5/7-row
+/// runs so they cannot evade export validation. A lone broad digit/delimiter
+/// candidate remains conservative (ordinary prose/tables need not be tabs);
+/// lone hyphen-leading rows keep the existing literal recognition.
+fn literal_rows(lines: &[&str]) -> Vec<bool> {
+    let mut literal = vec![false; lines.len()];
+    let mut start = 0;
+    while start < lines.len() {
+        let mut end = start;
+        while end < lines.len() && literal_candidate(lines[end]) {
+            end += 1;
+        }
+        if end > start {
+            if end - start > 1
+                || lines[start]
+                    .trim()
+                    .split_once('|')
+                    .is_some_and(|(_, body)| body.starts_with('-'))
+            {
+                literal[start..end].fill(true);
+            }
+            start = end;
+        } else {
+            start += 1;
+        }
+    }
+    literal
+}
+
+/// A conservative parenthetical chord/fingering comment. One or more
+/// whitespace-separated parenthesized items are allowed; each item is either a
+/// chord in the existing syntax (including `*` decorations) or exactly six
+/// string positions containing only digits and `x`/`X`. In particular, ordinary
+/// parenthetical lyrics and open-ended hyphenated "fingering" prose do not
+/// qualify for automatic association.
+fn parenthetical_fingering_comment(line: &str) -> bool {
+    let mut any = false;
+    for token in line.split_whitespace() {
+        let Some(inner) = token.strip_prefix('(').and_then(|s| s.strip_suffix(')')) else {
+            return false;
+        };
+        let six_positions = inner.len() == 6
+            && inner
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b == b'x' || b == b'X')
+            && inner.bytes().any(|b| b.is_ascii_digit());
+        if !six_positions && !is_chord(chord_shape(inner)) {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// Literal chord heading, with `or` allowed only between valid chord tokens.
+/// This is annotation recognition only, not a change to chord/lyric semantics.
+fn tab_chord_heading(line: &str) -> bool {
+    if is_chord_only_line(line.trim()) {
+        return true;
+    }
+    let tokens: Vec<_> = line.split_whitespace().collect();
+    !tokens.is_empty()
+        && tokens.iter().enumerate().all(|(index, token)| {
+            is_chord(chord_shape(token))
+                || (*token == "or"
+                    && index > 0
+                    && index + 1 < tokens.len()
+                    && is_chord(chord_shape(tokens[index - 1]))
+                    && is_chord(chord_shape(tokens[index + 1])))
+        })
+}
+
+/// Recognize only an explicit annotation prefix immediately above an original
+/// six-labelled-string run. At least one parenthetical fingering/chord comment
+/// is required; one adjacent chord heading may appear before or after the cues.
+/// No blanks,
+/// sections, metadata, prose, unrelated chord headings, or other tab runs are
+/// crossed, and unsupported partial runs never acquire annotations.
+fn tab_annotations(lines: &[&str], literal: &[bool]) -> Vec<bool> {
+    let mut annotations = vec![false; lines.len()];
+    let mut block_start = 0;
+    while block_start < lines.len() {
+        if !literal[block_start] {
+            block_start += 1;
+            continue;
+        }
+        let mut block_end = block_start + 1;
+        while block_end < lines.len() && literal[block_end] {
+            block_end += 1;
+        }
+        if block_end - block_start == 6 && block_start > 0 {
+            let mut cursor = block_start;
+            while cursor > 0 && parenthetical_fingering_comment(lines[cursor - 1]) {
+                cursor -= 1;
+            }
+            let mut evidence = cursor < block_start;
+            // At most one adjacent heading, with qualifying cues on either
+            // side. Never cross a second heading to find distant evidence.
+            if cursor > 0 && tab_chord_heading(lines[cursor - 1]) {
+                cursor -= 1;
+                let before_heading = cursor;
+                while cursor > 0 && parenthetical_fingering_comment(lines[cursor - 1]) {
+                    cursor -= 1;
+                }
+                evidence |= cursor < before_heading;
+            }
+            // Explicit parenthetical evidence is mandatory. This avoids
+            // absorbing a genuine chord-only line before an unrelated tab.
+            if evidence {
+                annotations[cursor..block_start].fill(true);
+            }
+        }
+        block_start = block_end;
+    }
+    annotations
+}
+
 fn fretboard_re() -> &'static Regex {
     FRETBOARD_RE.get_or_init(|| {
-        Regex::new(r"(?i)^\s*[A-G]#?\|(?:[-]|[-0-9hbpsl/\\~^xv\(\)\|\s])+\|?\s*$").unwrap()
+        Regex::new(r"(?i)^\s*[A-G][#b]?\|(?:[-]|[-0-9hbpsl/\\~^xv\(\)\|\s])+\|?\s*$").unwrap()
     })
 }
 
@@ -359,7 +493,7 @@ pub fn parse(raw: &str) -> Song {
             LineKind::Blank | LineKind::Noise(_) => {
                 flush_pending(&mut current, &mut pending_chords);
             }
-            LineKind::Fretboard(_) => {
+            LineKind::Fretboard(_) | LineKind::TabAnnotation(_) => {
                 flush_pending(&mut current, &mut pending_chords);
                 current.lines.push(kind);
             }
@@ -372,6 +506,17 @@ pub fn parse(raw: &str) -> Song {
     if analysis.skipped_prose && song.title.is_none() {
         song.title = first_lyric_line(&song.sections);
     }
+    let original: Vec<_> = classified.iter().map(|c| c.kind.clone()).collect();
+    let provenance = crate::tablature::source_provenance(&original);
+    let retained: Vec<_> = classified
+        .iter()
+        .zip(provenance)
+        .filter(|(c, _)| {
+            !c.preamble && matches!(c.kind, LineKind::Fretboard(_) | LineKind::TabAnnotation(_))
+        })
+        .map(|(_, source)| source)
+        .collect();
+    crate::tablature::attach(&mut song, &retained);
     song
 }
 
@@ -399,6 +544,8 @@ pub fn classify_lines(raw: &str) -> Vec<ClassifiedLine> {
 /// `parse` calls this directly so its body classification and the public
 /// `classify_lines` are the same pass, not two copies.
 fn classify_lines_from(lines: &[&str], body_start: usize) -> Vec<ClassifiedLine> {
+    let literal = literal_rows(lines);
+    let annotations = tab_annotations(lines, &literal);
     let mut classified = Vec::with_capacity(lines.len());
     let mut pending_chords = false;
 
@@ -411,12 +558,24 @@ fn classify_lines_from(lines: &[&str], body_start: usize) -> Vec<ClassifiedLine>
             });
             continue;
         }
-        let kind = classify_line(trimmed);
+        let kind = if annotations[index] {
+            LineKind::TabAnnotation((*line).to_string())
+        } else if literal[index] {
+            LineKind::Fretboard((*line).to_string())
+        } else {
+            classify_line(trimmed)
+        };
+        let kind = if matches!(kind, LineKind::Fretboard(_)) {
+            LineKind::Fretboard((*line).to_string())
+        } else {
+            kind
+        };
         let kind = match kind {
             LineKind::SectionHeader(_, _)
             | LineKind::Blank
             | LineKind::Noise(_)
-            | LineKind::Fretboard(_) => {
+            | LineKind::Fretboard(_)
+            | LineKind::TabAnnotation(_) => {
                 pending_chords = false;
                 kind
             }
@@ -571,8 +730,16 @@ fn analyze_preamble(lines: &[&str]) -> Preamble {
     let mut scan_end = 0;
     let mut in_chord_diagram = false;
     let mut skipped_prose = false;
+    let literal = literal_rows(lines);
+    let annotations = tab_annotations(lines, &literal);
 
     for (index, line) in lines.iter().enumerate() {
+        // Useful literal notation and its explicit annotation prefix win over
+        // a preceding chord-definition or diagram heading. Title/artist
+        // inference must not consume a parenthetical fingering row as prose.
+        if literal[index] || annotations[index] {
+            break;
+        }
         let trimmed = line.trim();
         let lower = trimmed.to_lowercase();
         if lower.contains("chords used") {
@@ -976,6 +1143,7 @@ mod tests {
             LineKind::ChordOnly(_) => "chord-only",
             LineKind::SectionHeader(_, _) => "section header",
             LineKind::Fretboard(_) => "fretboard",
+            LineKind::TabAnnotation(_) => "tab annotation",
             LineKind::Noise(_) => "noise",
             LineKind::Blank => "blank",
             LineKind::Ambiguous(_) => "ambiguous",

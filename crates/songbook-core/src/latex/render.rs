@@ -1,5 +1,5 @@
 use crate::parser::chord::{chord_tokens, is_chord};
-use crate::parser::song::{LineKind, Section, SectionKind, Song};
+use crate::parser::song::{LineKind, SectionKind, Song};
 use anyhow::Result;
 use regex::Regex;
 use std::sync::OnceLock;
@@ -156,16 +156,46 @@ fn normalize_for_comparison(text: &str) -> String {
         .collect()
 }
 
-pub(crate) fn chorus_signature(section: &Section) -> Option<String> {
+pub(crate) fn chorus_signature(song: &Song, section_index: usize) -> Option<String> {
+    let section = &song.sections[section_index];
     if section.kind != SectionKind::Chorus {
         return None;
     }
     let mut signature = String::new();
     let mut has_content = false;
-    for line in &section.lines {
+    for (line_index, line) in section.lines.iter().enumerate() {
+        // Source positions differ between genuine repeats, but boundaries and
+        // original row counts must agree. In particular, two discarded partial
+        // groups must not collapse into one block with the same remaining text.
+        if let Some(group) = song
+            .tab_groups
+            .iter()
+            .find(|g| g.section == section_index && g.annotation_start == line_index)
+        {
+            signature.push_str(&format!(
+                "group:{}:{}\n",
+                group.end - group.start,
+                group.original_rows
+            ));
+        }
         match line {
             LineKind::Lyric(text) | LineKind::ChordOnly(text) => {
+                signature.push_str("lyric:");
                 signature.push_str(&normalize_for_comparison(text));
+                signature.push('\n');
+                has_content = true;
+            }
+            LineKind::Fretboard(text) | LineKind::TabAnnotation(text) => {
+                // Length-delimit the opaque payload, including annotation
+                // content and its distinct role, not source location or
+                // musical interpretation.
+                let role = if matches!(line, LineKind::TabAnnotation(_)) {
+                    "annotation"
+                } else {
+                    "string"
+                };
+                signature.push_str(&format!("{role}:{}:", text.len()));
+                signature.push_str(text);
                 signature.push('\n');
                 has_content = true;
             }
@@ -177,6 +207,8 @@ pub(crate) fn chorus_signature(section: &Section) -> Option<String> {
 
 /// Renders a parsed song into songs-package LaTeX.
 pub fn render(song: &Song, standalone: bool) -> Result<String> {
+    crate::tablature::validate(song)?;
+    let has_tabs = !song.tab_groups.is_empty();
     let mut body = String::new();
 
     body.push_str("\\beginsong{");
@@ -186,6 +218,15 @@ pub fn render(song: &Song, standalone: bool) -> Result<String> {
         body.push_str(&format!("[by={{{}}}]", escape(artist)));
     }
     body.push('\n');
+    if has_tabs {
+        body.push_str(crate::tablature::LAYOUT_MARKER);
+        if song.tablature_transpose != 0 {
+            body.push_str(&format!(
+                "\\textnote{{{}}}\n",
+                escape(crate::tablature::UNCHANGED_WARNING)
+            ));
+        }
+    }
 
     if let Some(tuning) = &song.tuning {
         if !is_standard_tuning(tuning) {
@@ -205,8 +246,8 @@ pub fn render(song: &Song, standalone: bool) -> Result<String> {
 
     let mut previous_chorus: Option<String> = None;
     let mut repeat_noted = false;
-    for section in &song.sections {
-        let signature = chorus_signature(section);
+    for (section_index, section) in song.sections.iter().enumerate() {
+        let signature = chorus_signature(song, section_index);
         if let Some(signature) = &signature {
             if previous_chorus.as_deref() == Some(signature) {
                 if !repeat_noted {
@@ -223,12 +264,19 @@ pub fn render(song: &Song, standalone: bool) -> Result<String> {
         }
 
         let mut rendered = Vec::new();
-        for line in &section.lines {
+        for (line_index, line) in section.lines.iter().enumerate() {
             match line {
                 LineKind::Lyric(text) => rendered.push(render_lyric(text)),
                 LineKind::ChordOnly(text) => rendered.extend(render_chord_line(text)),
-                // Fretboard lines remain parser-only until gtab rendering is
-                // designed; triage may promote them later.
+                LineKind::Fretboard(_) | LineKind::TabAnnotation(_) => {
+                    if let Some(group) = song
+                        .tab_groups
+                        .iter()
+                        .find(|g| g.section == section_index && g.annotation_start == line_index)
+                    {
+                        rendered.push(crate::tablature::render_group(song, group));
+                    }
+                }
                 _ => {}
             }
         }
@@ -251,7 +299,12 @@ pub fn render(song: &Song, standalone: bool) -> Result<String> {
     body.push_str("\\endsong\n");
 
     if standalone {
-        Ok(PREAMBLE_TEMPLATE.replace("{{SONGS}}", &body))
+        let template = if has_tabs {
+            PREAMBLE_TEMPLATE.replace("\\begin{songs}", "\\songcolumns{1}\n\\begin{songs}")
+        } else {
+            PREAMBLE_TEMPLATE.into()
+        };
+        Ok(template.replace("{{SONGS}}", &body))
     } else {
         Ok(body)
     }

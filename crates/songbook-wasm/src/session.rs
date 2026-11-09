@@ -1,11 +1,13 @@
 use crate::actions::{map_action, map_key};
 use crate::error::SessionError;
-use crate::model::{self, BookPartSnapshot, PreviewRowSnapshot, SessionSnapshot};
+use crate::model::{
+    self, BookPartSnapshot, PreviewRowSnapshot, SessionSnapshot, TabSplitPreviewSnapshot,
+};
 use songbook_core::book;
 use songbook_core::latex::render::render;
 use songbook_core::parser::classify::parse;
 use songbook_core::transpose::transpose_song;
-use songbook_core::triage::{Key, Phase, TriageState};
+use songbook_core::triage::{Key, Phase, TabSplitPlan, TriageState};
 
 /// Browser-friendly state machine over a single in-memory song.
 ///
@@ -18,6 +20,8 @@ pub struct Session {
     state: TriageState,
     /// Net transposition in semitones applied on top of the triaged song.
     transpose: i32,
+    /// One-use core-generated operation. Only its read-only preview is exposed.
+    pending_tab_split: Option<TabSplitPlan>,
 }
 
 impl Session {
@@ -33,6 +37,7 @@ impl Session {
         Ok(Self {
             state: TriageState::new(song, raw),
             transpose: 0,
+            pending_tab_split: None,
         })
     }
 
@@ -42,6 +47,7 @@ impl Session {
     /// and survives triage edits and undo, because the triage model keeps the
     /// untransposed raw lines and the offset is applied on top.
     pub fn transpose(&mut self, delta: i32) -> Result<(), SessionError> {
+        self.pending_tab_split = None;
         self.transpose += delta;
         Ok(())
     }
@@ -56,6 +62,43 @@ impl Session {
     /// Full snapshot of metadata, phase, and every raw review line.
     pub fn snapshot(&self) -> SessionSnapshot {
         model::snapshot(&self.state, self.transpose)
+    }
+
+    /// Stage an explicit raw-column split and return core's literal preview.
+    /// A new request drops the previous plan, even if the request is invalid.
+    /// Planning does not change review, selection, messages or undo history.
+    pub fn plan_tab_split(
+        &mut self,
+        after_column: usize,
+    ) -> Result<TabSplitPreviewSnapshot, SessionError> {
+        self.pending_tab_split = None;
+        let plan = self
+            .state
+            .plan_tab_split(after_column)
+            .map_err(|error| SessionError::TabSplit(error.to_string()))?;
+        let preview = plan.preview().into();
+        self.pending_tab_split = Some(plan);
+        Ok(preview)
+    }
+
+    /// Consume the pending plan and atomically apply it through core. Core also
+    /// validates revision/selection/data; failure consumes the plan without edits.
+    /// Returns the same fresh, transposition-aware snapshot as `snapshot()`.
+    pub fn apply_tab_split(&mut self) -> Result<SessionSnapshot, SessionError> {
+        let plan = self
+            .pending_tab_split
+            .take()
+            .ok_or(SessionError::NoTabSplitPlan)?;
+        self.state
+            .apply_tab_split(plan)
+            .map_err(|error| SessionError::TabSplit(error.to_string()))?;
+        Ok(self.snapshot())
+    }
+
+    /// Drop the plan only, without a review action, message or undo mutation.
+    pub fn cancel_tab_split(&mut self) -> SessionSnapshot {
+        self.pending_tab_split = None;
+        self.snapshot()
     }
 
     /// Structure preview rows for the current decisions and metadata.
@@ -84,6 +127,7 @@ impl Session {
     /// Applies a semantic action such as `next`, `discard`, `undo`, or `skip`.
     pub fn handle_action(&mut self, action: &str) -> Result<(), SessionError> {
         let key = map_action(action)?;
+        self.pending_tab_split = None;
         self.state.handle(key);
         Ok(())
     }
@@ -91,6 +135,7 @@ impl Session {
     /// Applies a browser key name, respecting the current phase and edit mode.
     pub fn handle_key(&mut self, key: &str) -> Result<(), SessionError> {
         let key = map_key(&self.state, key)?;
+        self.pending_tab_split = None;
         self.state.handle(key);
         Ok(())
     }
@@ -106,6 +151,7 @@ impl Session {
             (Some(ch), None) => ch,
             _ => return Err(SessionError::InvalidChar(value.to_string())),
         };
+        self.pending_tab_split = None;
         self.state.handle(Key::Char(ch));
         Ok(())
     }
@@ -116,6 +162,7 @@ impl Session {
         if !self.can_type() {
             return Err(SessionError::NotEditing);
         }
+        self.pending_tab_split = None;
         for ch in text.chars() {
             self.state.handle(Key::Char(ch));
         }
@@ -132,6 +179,267 @@ mod tests {
     use super::*;
 
     const RAW: &str = "Song: Test\nArtist: Band\n[Verse]\n[Am]Hello\nmystery line";
+    const TAB: &str = "  e|--0--12--|  \n  B|--1------|  \n  G|--2------|  \n  D|--3------|  \n  A|--4------|  \n  E|--5------|  \n";
+
+    #[test]
+    fn literal_tabs_snapshot_preview_export_and_book_are_consistent() {
+        let mut session = Session::new(TAB).unwrap();
+        assert!(session.snapshot().has_tablature);
+        assert!(session.snapshot().warnings.is_empty());
+        assert_eq!(session.snapshot().pending_flags, 6);
+        let preview = session.preview_rows();
+        assert_eq!(
+            preview
+                .iter()
+                .filter(|r| r.style == "tablature")
+                .map(|r| r.text.as_str())
+                .collect::<Vec<_>>(),
+            TAB.lines().collect::<Vec<_>>()
+        );
+        let body = session.export_tex(false).unwrap();
+        assert_eq!(session.book_parts().unwrap().body, body);
+        assert!(session.book_parts().unwrap().chords.is_empty());
+        session.handle_action("confirm").unwrap();
+        session.handle_action("auto_accept").unwrap();
+        assert_eq!(session.export_tex(false).unwrap(), body);
+    }
+
+    #[test]
+    fn manual_tab_annotation_action_is_ferried_with_provenance_and_split_preview() {
+        let raw = format!("[Verse]\n[C]Heading\n(fingering)\n{TAB}");
+        let mut session = Session::new(&raw).unwrap();
+        session.handle_action("confirm").unwrap();
+        let heading = index_of(&session.snapshot(), "[C]Heading");
+        let comment = index_of(&session.snapshot(), "(fingering)");
+        assert_eq!(session.snapshot().position, comment);
+
+        // An ordinary intervening comment cannot be crossed or absorbed.
+        session.handle_action("prev").unwrap();
+        assert_eq!(session.snapshot().position, heading);
+        let before = session.snapshot().lines;
+        session.handle_action("tab_annotation").unwrap();
+        assert_eq!(session.snapshot().lines, before);
+        assert!(session
+            .snapshot()
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("immediately before"));
+
+        // Associate the nearest comment first; the action advances one row,
+        // so explicitly navigate back twice to associate the earlier heading.
+        session.handle_action("next").unwrap();
+        assert_eq!(session.snapshot().position, comment);
+        session.handle_action("tab_annotation").unwrap();
+        assert_eq!(session.snapshot().lines[heading].tab_role, None);
+        session.handle_action("prev").unwrap();
+        session.handle_action("prev").unwrap();
+        assert_eq!(session.snapshot().position, heading);
+        session.handle_action("tab_annotation").unwrap();
+        let snapshot = session.snapshot();
+        let string = &snapshot.lines[comment + 1];
+        assert_eq!(string.tab_role.as_deref(), Some("string"));
+        assert!(string.tab_origin.is_some());
+        assert!(string.tab_instance.is_some());
+        for (index, text) in [(heading, "[C]Heading"), (comment, "(fingering)")] {
+            let annotation = &snapshot.lines[index];
+            assert_eq!(annotation.text, text);
+            assert_eq!(annotation.source_line, index + 1);
+            assert_eq!(annotation.tab_role.as_deref(), Some("annotation"));
+            assert_eq!(annotation.tab_origin, string.tab_origin);
+            assert_eq!(annotation.tab_instance, string.tab_instance);
+            assert_eq!(annotation.effective_label, "tab annotation");
+        }
+        let literal: Vec<_> = session
+            .preview_rows()
+            .into_iter()
+            .filter(|row| row.style == "tab-annotation" || row.style == "tablature")
+            .collect();
+        assert_eq!(literal[0].style, "tab-annotation");
+        assert_eq!(literal[1].style, "tab-annotation");
+        assert_eq!(
+            literal
+                .iter()
+                .map(|row| row.text.as_str())
+                .collect::<Vec<_>>(),
+            ["[C]Heading", "(fingering)"]
+                .into_iter()
+                .chain(TAB.lines())
+                .collect::<Vec<_>>()
+        );
+
+        let split = session.plan_tab_split(10).unwrap();
+        assert_eq!(
+            session.snapshot(),
+            snapshot,
+            "planning must not mutate review"
+        );
+        assert_eq!(split.bounds.annotation_count, 2);
+        assert_eq!(
+            (split.bounds.start, split.bounds.end),
+            (heading, comment + 7)
+        );
+        assert_eq!(split.bounds.origin, string.tab_origin.unwrap());
+        assert_eq!(split.bounds.instance, string.tab_instance.unwrap());
+        assert_eq!(split.annotations.len(), 2);
+        for (row, index) in split.annotations.iter().zip([heading, comment]) {
+            let text = &snapshot.lines[index].text;
+            assert_eq!(row.source_line, index + 1);
+            assert_eq!(row.original_row, index - heading + 1);
+            assert_eq!(row.left, text[..10.min(text.len())]);
+            assert_eq!(row.right, format!("    {}", text.get(10..).unwrap_or("")));
+            assert!(row.prefix.is_empty());
+            assert_eq!(row.padding_columns, 4);
+        }
+        assert!(split
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("annotations appear above both")));
+
+        let applied = session.apply_tab_split().unwrap();
+        let annotations: Vec<_> = applied
+            .lines
+            .iter()
+            .filter(|line| line.tab_role.as_deref() == Some("annotation"))
+            .collect();
+        assert_eq!(annotations.len(), 4);
+        for (child, rows) in annotations.chunks_exact(2).enumerate() {
+            for (index, line) in rows.iter().enumerate() {
+                let row = &split.annotations[index];
+                assert_eq!(&line.text, if child == 0 { &row.left } else { &row.right });
+                assert_eq!(line.source_line, row.source_line);
+                assert_eq!(line.tab_origin, string.tab_origin);
+                assert_ne!(line.tab_instance, string.tab_instance);
+                assert_eq!(line.tab_instance, rows[0].tab_instance);
+            }
+        }
+        assert_ne!(annotations[0].tab_instance, annotations[2].tab_instance);
+        assert_eq!(
+            session
+                .preview_rows()
+                .into_iter()
+                .filter(|row| row.style == "tab-annotation")
+                .map(|row| row.text)
+                .collect::<Vec<_>>(),
+            annotations
+                .iter()
+                .map(|line| line.text.clone())
+                .collect::<Vec<_>>()
+        );
+        session.handle_action("undo").unwrap();
+        assert_eq!(session.snapshot().lines, snapshot.lines);
+    }
+
+    #[test]
+    fn tab_warning_follows_both_session_and_action_offsets_and_reset() {
+        use songbook_core::tablature::UNCHANGED_WARNING;
+        let mut session = Session::new(&format!("[Verse]\n[C]Words\n{TAB}")).unwrap();
+        let original_tabs: Vec<_> = session
+            .preview_rows()
+            .into_iter()
+            .filter(|r| r.style == "tablature")
+            .collect();
+        session.transpose(2).unwrap();
+        assert_eq!(session.snapshot().warnings, [UNCHANGED_WARNING]);
+        assert!(session
+            .export_tex(false)
+            .unwrap()
+            .contains(UNCHANGED_WARNING));
+        assert!(session
+            .preview_rows()
+            .iter()
+            .any(|r| r.text == UNCHANGED_WARNING));
+        assert_eq!(
+            session
+                .preview_rows()
+                .into_iter()
+                .filter(|r| r.style == "tablature")
+                .collect::<Vec<_>>(),
+            original_tabs
+        );
+        session.transpose(-2).unwrap();
+        assert!(session.snapshot().warnings.is_empty());
+        session.handle_action("transpose_up").unwrap();
+        assert_eq!(session.snapshot().transpose, 1);
+        assert_eq!(session.snapshot().warnings, [UNCHANGED_WARNING]);
+        session.handle_action("transpose_reset").unwrap();
+        assert!(session.snapshot().warnings.is_empty());
+    }
+
+    #[test]
+    fn partial_tabs_warn_and_discard_all_clears_presence_and_transpose_warning() {
+        let mut session = Session::new(TAB).unwrap();
+        session.handle_action("confirm").unwrap();
+        session.handle_action("discard").unwrap();
+        assert!(session.snapshot().warnings[0].contains("5 retained rows"));
+        assert!(session
+            .export_tex(false)
+            .unwrap()
+            .contains("Partial six-string"));
+        session.handle_action("undo").unwrap();
+        assert!(session.snapshot().warnings.is_empty());
+        session.transpose(3).unwrap();
+        for _ in 0..6 {
+            session.handle_action("discard").unwrap();
+        }
+        assert!(!session.snapshot().has_tablature);
+        assert!(session.snapshot().warnings.is_empty());
+        assert!(!session
+            .preview_rows()
+            .iter()
+            .any(|r| r.style == "tablature"));
+    }
+
+    #[test]
+    fn unsupported_and_wide_tabs_preview_but_export_and_book_fail_honestly() {
+        for raw in [
+            "e|--0--|\n".repeat(4),
+            format!("e|{}\n", "-".repeat(55)).repeat(6),
+        ] {
+            let session = Session::new(&raw).unwrap();
+            assert!(session.snapshot().has_tablature);
+            assert!(!session.snapshot().warnings.is_empty());
+            assert!(session
+                .preview_rows()
+                .iter()
+                .any(|r| r.style == "tablature"));
+            assert!(session.export_tex(false).is_err());
+            assert!(session.book_parts().is_err());
+        }
+    }
+
+    #[test]
+    fn core_validation_rejects_stale_stored_plans_and_consumes_them() {
+        // Bypass adapter invalidation deliberately: the opaque plan must still
+        // be guarded by core's revision and captured selection/data validation.
+        for mutation in 0..4 {
+            let mut session = Session::new(TAB).unwrap();
+            session.handle_action("confirm").unwrap();
+            session.plan_tab_split(10).unwrap();
+            match mutation {
+                0 => session.state.position = 1,
+                1 => session.state.lines[2].edited = Some("G|--edited--|".into()),
+                2 => {
+                    session.state.handle(Key::Next);
+                    session.state.handle(Key::Prev);
+                }
+                _ => session.state.lines[2].verdict = songbook_core::triage::Verdict::Discard,
+            }
+            let before = session.snapshot();
+            let error = session.apply_tab_split().unwrap_err();
+            assert!(
+                matches!(error, SessionError::TabSplit(ref message) if message.contains("stale"))
+            );
+            assert_eq!(session.snapshot(), before);
+            assert_eq!(session.apply_tab_split(), Err(SessionError::NoTabSplitPlan));
+            session.handle_action("undo").unwrap();
+            assert_eq!(
+                session.snapshot().message.as_deref(),
+                Some("Nothing to undo.")
+            );
+            assert_eq!(session.snapshot().lines, before.lines);
+        }
+    }
 
     fn session() -> Session {
         Session::new(RAW).unwrap()

@@ -123,7 +123,7 @@ fn run_single(input: &Path, cli: &Cli) -> Result<()> {
     let song = if cli.yes {
         Some(song)
     } else {
-        match tui::run(song, &raw, &out_path).context("interactive triage failed")? {
+        match tui::run(song, &raw, &out_path, cli.transpose).context("interactive triage failed")? {
             tui::Outcome::Saved(song) => Some(song),
             tui::Outcome::Quit => None,
         }
@@ -134,14 +134,19 @@ fn run_single(input: &Path, cli: &Cli) -> Result<()> {
     };
 
     if !triage_ran {
-        let report = audit::audit_report(&song, &raw);
+        let mut audited_song = song.clone();
+        transpose::transpose_song(&mut audited_song, cli.transpose);
+        let report = audit::audit_report(&audited_song, &raw);
         audit::apply_noninteractive_defaults(&mut song);
         print!("{report}");
     }
 
-    // The audit above describes the parse guesses, which transposition does
-    // not touch; the transposed song is what gets rendered below.
-    transpose::transpose_song(&mut song, cli.transpose);
+    // Interactive review already applied the initial CLI offset plus any
+    // preview changes (or reset). Noninteractive conversion applies it after
+    // defaults so ambiguous lines kept as lyrics transpose as before.
+    if !triage_ran {
+        transpose::transpose_song(&mut song, cli.transpose);
+    }
 
     let tex = latex::render::render(&song, cli.standalone)
         .with_context(|| format!("rendering {}", input.display()))?;

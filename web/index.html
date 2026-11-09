@@ -114,9 +114,22 @@
       <h2 id="triage-heading">Review each line</h2>
       <p id="triage-status" class="status-bar"></p>
       <p id="triage-live" class="visually-hidden" aria-live="polite"></p>
+      <div id="triage-warnings" class="song-warnings" hidden></div>
+      <p id="triage-tab-scroll" class="hint" hidden>ASCII tab annotations and string rows do not wrap.
+        Focus the review list with Tab, then use Left/Right to scroll horizontally.</p>
       <div id="triage-list" role="list"></div>
       <div id="current-controls">
         <h3>Actions for the current line</h3>
+        <div id="triage-tab-explanation" hidden>
+          <p id="triage-tab-keep">Fretboard notation has annotation rows above separate string rows.
+            Keep preserves only this line exactly; Discard removes only this line.</p>
+          <p id="triage-tab-edit" class="hint">Editing an annotation or string row may disturb their shared alignment.
+            ASCII text is not an accessible musical interpretation.</p>
+        </div>
+        <p id="triage-tab-annotation-help" class="hint">Tab annotation manually attaches the selected comment row
+          immediately before a complete original six-string block and keeps that row as literal text, not lyrics or chords.
+          For several comment rows, attach the nearest one first, then work upward; only already attached annotations may intervene.
+          Other rows keep their own Keep/Discard/Edit/Undo choices. Header remains a section-header action.</p>
         <div class="actions" role="group" aria-label="Verdict for the current line">
           <button type="button" data-action="keep" class="primary" aria-keyshortcuts="Enter">Keep <kbd aria-hidden="true">⏎</kbd><span class="visually-hidden"> (shortcut Enter)</span></button>
           <button type="button" data-action="discard" aria-keyshortcuts="d">Discard <kbd aria-hidden="true">d</kbd><span class="visually-hidden"> (shortcut d)</span></button>
@@ -124,8 +137,10 @@
           <button type="button" data-action="chord_only" aria-keyshortcuts="c">Chord only <kbd aria-hidden="true">c</kbd><span class="visually-hidden"> (shortcut c)</span></button>
           <button type="button" data-action="section_header" aria-keyshortcuts="h">Header <kbd aria-hidden="true">h</kbd><span class="visually-hidden"> (shortcut h)</span></button>
           <button type="button" data-action="noise" aria-keyshortcuts="n">Noise <kbd aria-hidden="true">n</kbd><span class="visually-hidden"> (shortcut n)</span></button>
+          <button type="button" data-action="tab_annotation" aria-keyshortcuts="t" aria-describedby="triage-tab-annotation-help">Tab annotation <kbd aria-hidden="true">t</kbd><span class="visually-hidden"> (shortcut t)</span></button>
         </div>
         <div class="actions">
+          <button type="button" id="split-tab-button" hidden>Split tab block…</button>
           <button type="button" data-action="edit" aria-keyshortcuts="e">Edit line <kbd aria-hidden="true">e</kbd><span class="visually-hidden"> (shortcut e)</span></button>
           <button type="button" data-action="undo" aria-keyshortcuts="u Control+Z Meta+Z">Undo <kbd aria-hidden="true">u</kbd><span class="visually-hidden"> (shortcut u)</span></button>
           <button type="button" data-action="next_flag" aria-keyshortcuts="f">Next flag <kbd aria-hidden="true">f</kbd><span class="visually-hidden"> (shortcut f)</span></button>
@@ -137,14 +152,53 @@
           <button type="button" id="triage-back" hidden>Back</button>
           <button type="button" id="start-over">Start over</button>
         </div>
+        <section id="split-tab-panel" class="split-tab-panel" aria-labelledby="split-tab-heading" hidden>
+          <h3 id="split-tab-heading">Split tab block</h3>
+          <p id="split-tab-instructions">Choose the raw column after which to split all associated annotations and six string rows.
+            Columns include indentation, the string label and first pipe; this is not a musical position.</p>
+          <p id="split-tab-scope" class="hint"></p>
+          <p class="hint">Allowed range: <span id="split-tab-range">core bounds</span>. Default is the largest valid cut.</p>
+          <label for="split-tab-column">After raw column</label>
+          <input id="split-tab-column" type="number" step="1" aria-describedby="split-tab-instructions split-tab-range split-tab-scope">
+          <div class="actions">
+            <button type="button" id="split-tab-preview-trigger" class="primary">Preview split</button>
+            <button type="button" id="split-tab-apply" hidden>Apply split</button>
+            <button type="button" id="split-tab-cancel">Cancel split</button>
+          </div>
+          <p id="split-tab-error" role="alert" class="error"></p>
+          <div id="split-tab-preview-content" aria-live="off">
+            <p id="split-tab-preview-live" class="visually-hidden" role="status" aria-live="polite"></p>
+            <p id="split-tab-warnings" class="split-warning"></p>
+            <div id="split-tab-preview" hidden>
+              <h4 id="split-tab-left-heading">Left block</h4>
+              <div id="split-tab-left" class="split-tab-rows" tabindex="0" role="region" aria-label="Left split preview, scrollable" aria-describedby="split-tab-left-empty split-tab-preview-help"></div>
+              <p id="split-tab-left-empty" class="hint" hidden></p>
+              <h4 id="split-tab-right-heading">Right block</h4>
+              <div id="split-tab-right" class="split-tab-rows" tabindex="0" role="region" aria-label="Right split preview, scrollable" aria-describedby="split-tab-right-empty split-tab-preview-help"></div>
+              <p id="split-tab-right-empty" class="hint" hidden></p>
+              <details>
+                <summary>Row lengths and added alignment spaces</summary>
+                <ul id="split-tab-row-details"></ul>
+              </details>
+              <p id="split-tab-preview-help" class="hint">Annotations appear above the strings in both exact previews.
+                Empty annotation fragments are described outside the literal text. Focus either block with Tab, then use Left/Right to scroll horizontally.
+                Review both before applying. Changing the column requires a fresh Preview split. Escape cancels; Enter in the column field previews.
+                Applying is one undoable change.</p>
+            </div>
+          </div>
+        </section>
         <p class="hint">j/k move · Enter keep · d discard · l lyric · c chord ·
-          h header · n noise · e edit · u undo · f/F flag · a auto · s/p preview ·
+          h header · n noise · t tab annotation · e edit · u undo · f/F flag · a auto · s/p preview ·
           PgUp/PgDn page</p>
       </div>
     </section>
 
     <section id="preview-screen" class="screen" aria-labelledby="preview-heading" hidden>
       <h2 id="preview-heading">Structure preview</h2>
+      <div id="preview-warnings" class="song-warnings" hidden></div>
+      <p id="preview-tab-help" class="hint" hidden>ASCII tab notation is literal text, not a musical interpretation.
+        Annotations above the string rows share their alignment and do not wrap.
+        Focus a tab block with Tab, then use Left/Right to scroll horizontally.</p>
       <div id="preview-content" tabindex="0" role="region" aria-label="Song structure preview, scrollable"></div>
       <div class="actions" role="group" aria-label="Transposition">
         <button type="button" id="transpose-down" aria-keyshortcuts="-">Transpose −1 <kbd aria-hidden="true">-</kbd><span class="visually-hidden"> (shortcut minus)</span></button>
@@ -172,6 +226,7 @@
       <h2 id="book-export-heading">Book export</h2>
       <p id="book-summary" role="status" aria-live="polite" aria-atomic="true"></p>
       <div id="book-export-failed" hidden></div>
+      <div id="book-warnings" class="song-warnings" hidden></div>
       <div id="export-paste-box" class="paste-box">
         <h3>Add a pasted song</h3>
         <label for="export-paste-input">Paste tab text</label>
@@ -195,6 +250,7 @@
       <p id="book-pdf-status" role="status" aria-live="polite" aria-atomic="true"></p>
     </section>
   </main>
+  <p id="warnings-live" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></p>
   <footer>
     <p>Songbook — private, browser-local song editor. No uploads, no tracking.</p>
     <p>Copyright (C) 2026 @nikolaioellegaard. Songbook is free software under the

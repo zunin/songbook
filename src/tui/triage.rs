@@ -5,7 +5,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
-use songbook_core::triage::{line_kind_label, Phase, TriageState, Verdict};
+use songbook_core::tablature::TabRowRole;
+use songbook_core::triage::{line_kind_label, Phase, ReviewLine, TriageState, Verdict};
 
 pub fn draw(frame: &mut Frame, state: &TriageState, confirm_quit: bool) {
     let area = frame.area();
@@ -121,7 +122,7 @@ fn draw_main(frame: &mut Frame, area: Rect, state: &TriageState) {
 fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(5)])
+        .constraints([Constraint::Min(3), Constraint::Length(8)])
         .split(area);
 
     // "dot = preamble" instead of the marker itself (UX review F15): the
@@ -134,6 +135,30 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
         state.pending_flags(),
         transpose_suffix(state)
     );
+    // A shared prefix width keeps source columns aligned even when a row's
+    // review status changes. The entire unwrapped line remains pannable.
+    let label_width = state
+        .lines
+        .iter()
+        .map(|line| {
+            let was = if line.effective_label() == line_kind_label(&line.kind) {
+                0
+            } else {
+                8 + line_kind_label(&line.kind).chars().count()
+            };
+            review_label(line).chars().count() + " · preamble".chars().count() + was + 2
+        })
+        .max()
+        .unwrap_or(0);
+    let label_width = if state
+        .lines
+        .iter()
+        .any(|line| line.tab_provenance().is_some())
+    {
+        label_width
+    } else {
+        0
+    };
     let lines: Vec<Line> = state
         .lines
         .iter()
@@ -166,9 +191,9 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
             };
             // Label names what the line IS NOW; the muted "was" clause only
             // when it differs from the parser's label (UX advisor rule).
-            let label = line.effective_label();
+            let label = review_label(line);
             let classifier = line_kind_label(&line.kind);
-            let was = if label == classifier {
+            let was = if line.effective_label() == classifier {
                 String::new()
             } else {
                 format!(" · was: {classifier}")
@@ -177,7 +202,7 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
                 Span::styled(number, Style::default().fg(Color::DarkGray)),
                 Span::styled(format!("{marker} "), style),
                 Span::styled(
-                    format!("[{label} · {status}{was}] "),
+                    format!("{:<label_width$} ", format!("[{label} · {status}{was}]")),
                     Style::default().fg(color),
                 ),
                 Span::styled(line.text().to_string(), style),
@@ -187,11 +212,13 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
     let scroll = state.position.saturating_sub(4);
     let input = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .wrap(Wrap { trim: false })
-        .scroll((scroll.min(u16::MAX as usize) as u16, 0));
+        .scroll((
+            scroll.min(u16::MAX as usize) as u16,
+            state.horizontal_scroll,
+        ));
     frame.render_widget(input, chunks[0]);
 
-    let details = if let Some(line) = state.current_line() {
+    let mut details = if let Some(line) = state.current_line() {
         let flag_position = state
             .flags
             .iter()
@@ -208,25 +235,92 @@ fn draw_triage_input(frame: &mut Frame, area: Rect, state: &TriageState) {
             state.classifier_label(),
             state.verdict_label()
         );
+        let mut details = vec![Line::from(status)];
+        if let Some(source) = line.tab_provenance() {
+            let role = match source.role() {
+                TabRowRole::Annotation => format!("annotation {}", source.original_row()),
+                TabRowRole::String => format!(
+                    "string {}/{}",
+                    source.original_row(),
+                    source.original_rows()
+                ),
+            };
+            details.push(Line::from(format!(
+                "Source: fretboard · {role} · input line {} · source block line {}",
+                source.source_line(),
+                source.origin() + 1
+            )));
+        }
+        details
+    } else {
+        vec![Line::from("No input lines."), Line::from("")]
+    };
+    details.extend(state.message.iter().cloned().map(Line::from));
+    details.extend(
+        songbook_core::tablature::warnings(&state.finish())
+            .into_iter()
+            .map(Line::from),
+    );
+    if !state.editing {
+        details.push(Line::from(
+            "t: explicitly attach selected adjacent comment to the following eligible six-string block; core rejects invalid associations.",
+        ));
+    }
+    let selected = Block::default()
+        .borders(Borders::ALL)
+        .title("Selected line");
+    let inner = selected.inner(chunks[1]);
+    frame.render_widget(selected, chunks[1]);
+    let detail_areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(details).wrap(Wrap { trim: true }),
+        detail_areas[0],
+    );
+    if let Some(line) = state.current_line() {
         let text = if state.editing {
             format!("Editing: {}█", state.edit_buffer)
         } else {
             format!("Line: {}", line.text())
         };
-        vec![Line::from(status), Line::from(text)]
-    } else {
-        vec![Line::from("No input lines."), Line::from("")]
-    };
-    frame.render_widget(
-        Paragraph::new(details)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Selected line"),
-            )
-            .wrap(Wrap { trim: true }),
-        chunks[1],
-    );
+        // Literal source is never softly wrapped, including this duplicate
+        // selected-row view. Append-only editing shows its tail and caret.
+        let pan = if state.editing {
+            (text
+                .chars()
+                .count()
+                .saturating_sub(detail_areas[1].width as usize))
+            .min(u16::MAX as usize) as u16
+        } else {
+            state.horizontal_scroll
+        };
+        frame.render_widget(Paragraph::new(text).scroll((0, pan)), detail_areas[1]);
+    }
+}
+
+/// Keep the shared lowercase classifier vocabulary, adding stable tab source
+/// role/ordinal from core provenance rather than inferring it from row text.
+fn review_label(line: &ReviewLine) -> String {
+    match line.tab_provenance() {
+        Some(source) => match source.role() {
+            TabRowRole::Annotation => {
+                format!(
+                    "{} · annotation {}",
+                    line.effective_label(),
+                    source.original_row()
+                )
+            }
+            TabRowRole::String => format!(
+                "{} · string {}/{}",
+                line.effective_label(),
+                source.original_row(),
+                source.original_rows()
+            ),
+        },
+        None => line.effective_label().to_string(),
+    }
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, state: &TriageState) {
@@ -247,7 +341,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &TriageState) {
             // a accept remaining. Transposition is preview-only (F10), so the
             // +/-/0 keys and their legend entry are gone from triage.
             _ => concat!(
-                "j/k line · f/F flag · PgUp/PgDn jump · Enter keep · d discard · l lyric · c chord · ",
+                "F2 split tab block · t tab annotation · j/k line · Left/Right pan (no wrap) · f/F flag · PgUp/PgDn jump · Enter keep · d discard · l lyric · c chord · ",
                 "h header · n noise · e edit · u undo · a accept remaining · s preview · q quit"
             ),
         }
@@ -412,6 +506,109 @@ mod tests {
         let text = rendered_at(&state, 100, 26);
         assert_eq!(state.position, 12);
         assert!(text.contains("lyric line 10"));
+    }
+
+    #[test]
+    fn source_rows_show_tab_role_ordinals_and_selected_source_details() {
+        let raw = format!(
+            "  Em A7  \n(022000) (x02220)\n{}",
+            ["e", "B", "G", "D", "A", "E"]
+                .map(|label| format!("{label}|{}|", "-".repeat(18)))
+                .join("\n")
+        );
+        let mut state = TriageState::new(parse(&raw), &raw);
+        state.handle(Key::Confirm);
+        let text = rendered(&state);
+        assert!(text.contains("tab annotation · annotation 1"), "{text}");
+        assert!(text.contains("tab annotation · annotation 2"), "{text}");
+        assert!(text.contains("fretboard · string 1/6"), "{text}");
+        assert!(text.contains("fretboard · string 6/6"), "{text}");
+
+        state.position = 0;
+        let text = rendered(&state);
+        assert!(
+            text.contains("Source: fretboard · annotation 1 · input line 1"),
+            "{text}"
+        );
+        assert!(text.contains("classifier: tab annotation"), "{text}");
+        state.position = 2;
+        let text = rendered(&state);
+        assert!(
+            text.contains("Source: fretboard · string 1/6 · input line 3"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn tab_roles_preserve_chosen_verdict_labels_and_shared_source_context() {
+        let raw = format!(
+            "Song: Synthetic\n[Verse]\n  Em A7  \n{}",
+            "e|--0--|\n".repeat(6)
+        );
+        let mut state = TriageState::new(parse(&raw), &raw);
+        state.handle(Key::Confirm);
+        state.position = 2;
+        state.handle(Key::TabAnnotation);
+        state.position = 2;
+        let annotation_source = state.lines[2].tab_provenance().unwrap();
+        let string_source = state.lines[3].tab_provenance().unwrap();
+        assert_eq!(annotation_source.origin(), string_source.origin());
+        assert_eq!(annotation_source.instance(), string_source.instance());
+        state.handle(Key::Lyric);
+        assert_eq!(review_label(&state.lines[2]), "lyric · annotation 1");
+        state.handle(Key::Discard);
+        assert_eq!(review_label(&state.lines[3]), "discarded · string 1/6");
+        state.position = 2;
+        let text = rendered(&state);
+        assert!(text.contains("lyric · annotation 1"), "{text}");
+        assert!(text.contains("was: tab annotation"), "{text}");
+        assert!(text.contains("source block line 4"), "{text}");
+        assert!(text.contains("t tab annotation"), "{text}");
+        assert!(
+            text.contains("explicitly attach selected adjacent comment"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn annotation_and_string_literal_rows_share_columns_without_wrapping() {
+        let raw = format!(
+            "Song: Synthetic\n[Verse]\n  Em A7{}Dmaj7  \n{}",
+            " ".repeat(100),
+            "e|--0--|\n".repeat(6)
+        );
+        let mut state = TriageState::new(parse(&raw), &raw);
+        state.handle(Key::Confirm);
+        state.position = 2;
+        state.handle(Key::TabAnnotation);
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, &state, false)).unwrap();
+        let rows: Vec<String> = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(120)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect();
+        let annotation = rows
+            .iter()
+            .find(|row| row.contains("[tab annotation"))
+            .unwrap();
+        let string = rows
+            .iter()
+            .find(|row| row.contains("[fretboard · string 1/6"))
+            .unwrap();
+        assert_eq!(
+            annotation[..annotation.find("Em A7").unwrap()]
+                .chars()
+                .count()
+                - 2,
+            string[..string.find("e|--0--|").unwrap()].chars().count()
+        );
+        assert!(
+            !rows.iter().any(|row| row.contains("Dmaj7")),
+            "literal tail must not wrap"
+        );
     }
 
     #[test]

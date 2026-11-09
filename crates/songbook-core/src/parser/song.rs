@@ -22,6 +22,10 @@ pub enum LineKind {
     SectionHeader(SectionKind, String),
     /// Fretboard tablature (e|---3---| etc.).
     Fretboard(String),
+    /// Literal chord/fingering annotation attached to an adjacent tab block.
+    /// Kept separate from the six string rows so alignment and source counts
+    /// survive review, splitting and export.
+    TabAnnotation(String),
     /// Website noise, credits, ads, tuning notes, etc.
     Noise(String),
     Blank,
@@ -44,4 +48,9 @@ pub struct Song {
     #[allow(dead_code)]
     pub tuning: Option<String>,
     pub sections: Vec<Section>,
+    /// Retained tab locations and original source grouping (ADR0021).
+    pub tab_groups: Vec<crate::tablature::TabGroup>,
+    /// Net requested chord offset while tablature is retained; payload is never
+    /// changed. Shared state for conditional unchanged-tab warnings.
+    pub tablature_transpose: i32,
 }
