@@ -6,14 +6,13 @@ app; generated LaTeX uses the `songs` package and is compiled as-is to PDF.
 Song content stays local: no uploads or session persistence.
 
 - **[Use the live website](https://zunin.github.io/songbook/)** (desktop browsers).
-  The deployed site is currently v0.2.2; the tablature features described below
-  are accepted in source but not yet released or deployed.
+  The site updates after each successful tagged-release deployment.
 - **[Download releases](https://github.com/zunin/songbook/releases)**: servable
   distribution zip and corresponding source bundle.
 - [Architecture](docs/architecture.md), [principles](docs/principles.md), and
   [UX context](docs/ux-context.md).
 
-## Literal tablature (accepted in source; release pending)
+## Literal tablature (v0.3.0)
 
 Labelled six-string ASCII guitar tabs and associated literal diagram annotations
 are preserved through per-line Keep / Discard / Edit / Undo, preview and export.
@@ -30,8 +29,7 @@ non-six runs are rejected; partial six-string blocks retain their rows with a
 warning. Tabs and annotations stay literal when chords transpose: there is no
 fret transposition, tuning/musical validation or guaranteed musically safe split.
 See [literal-tab scope and limits](docs/adr/0021-literal-ascii-tablature.md) and
-[previewed splitting](docs/adr/0022-previewed-six-string-tab-splitting.md). These
-features are not yet on the live v0.2.2 website.
+[previewed splitting](docs/adr/0022-previewed-six-string-tab-splitting.md).
 
 ## Local development
 

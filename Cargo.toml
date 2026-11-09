@@ -4,7 +4,7 @@ default-members = [".", "crates/songbook-core", "crates/songbook-wasm"]
 
 [package]
 name = "songbook"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "Convert ASCII tabs (chord-over-lyrics) to LaTeX songs-package format"
 
